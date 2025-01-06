@@ -1,3 +1,5 @@
+// App.js
+
 import React, { useState } from 'react';
 import {
   AppBar,
@@ -18,126 +20,203 @@ import {
 } from '@mui/material';
 import {
   PurpleBrainIcon,
-  PurpleAirplaneIcon,
   PurpleMagicWandIcon
-} from './FakeIcons'; // or replace with MUI icons directly
+} from './FakeIcons';  // or use MUI icons, e.g. @mui/icons-material
 
 function App() {
   // State
   const [openAiKey, setOpenAiKey] = useState('');
+  const [topic, setTopic] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
-  const [generatedImageUrl, setGeneratedImageUrl] = useState('');
+  const [model, setModel] = useState('gpt-3.5-turbo');
+  const [scriptLength, setScriptLength] = useState('1h');
   const [script, setScript] = useState('');
-  const [scriptLength, setScriptLength] = useState('1h'); // '1h' or '2h'
-  const [voice, setVoice] = useState('attenborough');
-  const [model, setModel] = useState('gpt35');
-  const [estimatedCost, setEstimatedCost] = useState(0);
-  const [costBreakdown, setCostBreakdown] = useState({
-    scriptCost: 0,
-    imageCost: 0,
-    total: 0,
-  });
+  const [imageSize, setImageSize] = useState('512x512');
+  const [imageUrl, setImageUrl] = useState('');
+  const [ttsModel, setTtsModel] = useState('tts-1');
+  const [audioUrl, setAudioUrl] = useState('');
+  const [videoUrl, setVideoUrl] = useState('');
 
-  // Helpers
-  const updateCost = (field, amount) => {
-    const newBreakdown = { ...costBreakdown };
-    newBreakdown[field] += amount;
-    newBreakdown.total = newBreakdown.scriptCost + newBreakdown.imageCost;
-    setCostBreakdown(newBreakdown);
-  };
+  // (Optional) cost
+  const [cost, setCost] = useState(0);
 
-  // Handlers (dummy logic—replace with real API calls)
+  // Generate Title
   const handleGenerateTitle = async () => {
-    // Example: call your backend or directly OpenAI
-    // For now, just simulating:
-    const exampleTitle = 'The Rise and Fall of the Roman Empire';
-    setVideoTitle(exampleTitle);
-  };
-
-  const handleGenerateImage = async () => {
-    // Example: call DALL·E or your backend
-    // For now, just a placeholder
-    const exampleImageUrl = 'https://via.placeholder.com/1280x720?text=YouTube+Thumbnail';
-    setGeneratedImageUrl(exampleImageUrl);
-
-    // Suppose each image generation costs $0.02
-    updateCost('imageCost', 0.02);
-  };
-
-  const handleModelChange = (e) => {
-    const chosenModel = e.target.value;
-    setModel(chosenModel);
-
-    // Example cost logic for "estimated cost"
-    let cost = 0;
-    if (chosenModel === 'gpt35') cost = 0.05;
-    if (chosenModel === 'gpt4') cost = 0.20;
-    if (chosenModel === 'davinci') cost = 0.10;
-
-    if (scriptLength === '2h') {
-      cost += 0.05;
+    if (!openAiKey) {
+      alert('Please enter your OpenAI API key.');
+      return;
     }
 
-    setEstimatedCost(cost);
-  };
-
-  const handleScriptLengthChange = (e) => {
-    const length = e.target.value;
-    setScriptLength(length);
-
-    // Recompute the "estimated cost" with the selected model
-    let cost = 0;
-    if (model === 'gpt35') cost = 0.05;
-    if (model === 'gpt4') cost = 0.20;
-    if (model === 'davinci') cost = 0.10;
-
-    if (length === '2h') {
-      cost += 0.05;
+    try {
+      const res = await fetch('http://localhost:5000/generate_title', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic,
+          model,
+          user_api_key: openAiKey
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      if (data.title) {
+        setVideoTitle(data.title);
+      }
+      if (data.cost) {
+        setCost((prev) => prev + data.cost);
+      }
+    } catch (err) {
+      console.error('Title generation error:', err);
     }
-
-    setEstimatedCost(cost);
   };
 
+  // Generate Script
   const handleGenerateScript = async () => {
-    // Example: call your GPT endpoint with model + length + voice
-    // For now, just a dummy script
-    const exampleScript = `
-      This is a sample script about ${videoTitle}.
-      It covers major events in a dramatic style... 
-      (Imagine this is 1-2 hours long).
-    `;
-    setScript(exampleScript);
+    if (!openAiKey) {
+      alert('Please enter your OpenAI API key.');
+      return;
+    }
 
-    // Suppose script generation cost depends on model and length
-    let scriptCost = 0.1; // e.g. $0.10
-    if (model === 'gpt4') {
-      scriptCost = 0.2;
+    try {
+      const res = await fetch('http://localhost:5000/generate_script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic,
+          model,
+          length: scriptLength,
+          user_api_key: openAiKey
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      if (data.script) {
+        setScript(data.script);
+      }
+      if (data.script_cost) {
+        setCost((prev) => prev + data.script_cost);
+      }
+    } catch (err) {
+      console.error('Script generation error:', err);
     }
-    if (scriptLength === '2h') {
-      scriptCost += 0.1; // Additional cost for 2-hour version
-    }
-    updateCost('scriptCost', scriptCost);
   };
 
-  const handleVoiceChange = (e) => {
-    setVoice(e.target.value);
+  // Generate Image
+  const handleGenerateImage = async () => {
+    if (!openAiKey) {
+      alert('Please enter your OpenAI API key.');
+      return;
+    }
+
+    try {
+      const prompt = `A cinematic, documentary-style scene representing ${topic}`;
+      const res = await fetch('http://localhost:5000/generate_image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          image_size: imageSize,
+          num_images: 1,
+          user_api_key: openAiKey
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      if (data.image_url) {
+        setImageUrl(data.image_url);
+      }
+      if (data.cost) {
+        setCost((prev) => prev + data.cost);
+      }
+    } catch (err) {
+      console.error('Image generation error:', err);
+    }
   };
 
-  const handleGenerateVideo = async () => {
-    // Example: call your backend to compile audio + image into a video
-    alert('Pretend we generated the final video. You can now download it.');
+  // Generate Audio (TTS)
+  const handleGenerateAudio = async () => {
+    if (!openAiKey) {
+      alert('Please enter your OpenAI API key.');
+      return;
+    }
+    if (!script) {
+      alert('Please generate a script first.');
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5000/generate_audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script,
+          tts_model: ttsModel,
+          user_api_key: openAiKey
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      if (data.audio_file_url) {
+        setAudioUrl(data.audio_file_url);
+      }
+      if (data.cost) {
+        setCost((prev) => prev + data.cost);
+      }
+    } catch (err) {
+      console.error('Audio generation error:', err);
+    }
+  };
+
+  // Create Final Video
+  const handleCreateVideo = async () => {
+    if (!audioUrl || !imageUrl) {
+      alert('Need at least one image and an audio file.');
+      return;
+    }
+
+    try {
+      const res = await fetch('http://localhost:5000/create_video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio_url: audioUrl,
+          image_urls: [imageUrl],
+          user_api_key: openAiKey // optional if needed for logic
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      if (data.video_url) {
+        setVideoUrl(data.video_url);
+      }
+    } catch (err) {
+      console.error('Video creation error:', err);
+    }
   };
 
   return (
     <>
-      {/* TOP BAR with OpenAI Key */}
       <AppBar position="static" sx={{ backgroundColor: '#673ab7' }}>
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Aragornic History Video Maker
+            Aragornic AI Video Creator
           </Typography>
-
-          {/* OpenAI Key Input */}
+          {/* The user's OpenAI API key */}
           <TextField
             label="OpenAI API Key"
             variant="outlined"
@@ -150,182 +229,177 @@ function App() {
       </AppBar>
 
       <Container sx={{ mt: 4 }}>
-        {/* VIDEO TITLE */}
+        {/* TOPIC */}
         <Box mb={3}>
           <Typography variant="h5" gutterBottom>
-            Video Title
+            Topic
           </Typography>
-          <Box display="flex" alignItems="center">
+          <TextField
+            fullWidth
+            placeholder="E.g. Ancient Rome, World War II..."
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+          />
+        </Box>
+
+        {/* VIDEO TITLE */}
+        <Box mb={3}>
+          <Typography variant="h6" gutterBottom>Video Title</Typography>
+          <Box display="flex" gap={2}>
             <TextField
               fullWidth
-              variant="outlined"
-              placeholder="Enter or generate a video title"
+              placeholder="Generate or type in a title"
               value={videoTitle}
               onChange={(e) => setVideoTitle(e.target.value)}
             />
             <IconButton
               onClick={handleGenerateTitle}
-              sx={{ ml: 1, backgroundColor: '#9c27b0', color: 'white' }}
+              sx={{ backgroundColor: '#9c27b0', color: 'white' }}
             >
               <PurpleBrainIcon />
             </IconButton>
           </Box>
         </Box>
 
-        {/* THUMBNAIL */}
+        {/* MODEL & SCRIPT LENGTH */}
         <Box mb={3}>
-          <Typography variant="h5" gutterBottom>
-            Thumbnail
-          </Typography>
-          <Card
-            sx={{
-              width: 320, // ~YouTube thumbnail ratio
-              height: 180,
-              position: 'relative',
-              backgroundColor: '#f0f0f0',
-            }}
-          >
-            {generatedImageUrl ? (
-              <CardMedia
-                component="img"
-                image={generatedImageUrl}
-                alt="Generated Thumbnail"
-                sx={{ width: '100%', height: '100%' }}
-              />
-            ) : (
-              <Box
-                sx={{
-                  width: '100%',
-                  height: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#aaa',
-                }}
-              >
-                No image yet
-              </Box>
-            )}
-
-            {/* Purple AI Icon in the middle to trigger generation */}
-            <IconButton
-              onClick={handleGenerateImage}
-              sx={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                backgroundColor: '#9c27b0',
-                color: 'white',
-              }}
-            >
-              <PurpleBrainIcon />
-            </IconButton>
-          </Card>
-        </Box>
-
-        {/* SCRIPT SECTION */}
-        <Box mb={3}>
-          <Typography variant="h5" gutterBottom>
-            Script
-          </Typography>
-
-          {/* MODEL & LENGTH & ESTIMATED COST */}
-          <Grid container spacing={2} alignItems="center" mb={2}>
-            <Grid item xs={12} sm={3}>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
                 <InputLabel>Model</InputLabel>
                 <Select
                   value={model}
                   label="Model"
-                  onChange={handleModelChange}
+                  onChange={(e) => setModel(e.target.value)}
                 >
-                  <MenuItem value="gpt35">GPT-3.5 Turbo</MenuItem>
-                  <MenuItem value="gpt4">GPT-4</MenuItem>
-                  <MenuItem value="davinci">Davinci</MenuItem>
+                  <MenuItem value="gpt-3.5-turbo">GPT-3.5 Turbo</MenuItem>
+                  <MenuItem value="gpt-4">GPT-4</MenuItem>
+                  <MenuItem value="text-davinci-003">Davinci</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
-
-            <Grid item xs={12} sm={3}>
+            <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
-                <InputLabel>Length</InputLabel>
+                <InputLabel>Script Length</InputLabel>
                 <Select
                   value={scriptLength}
-                  label="Length"
-                  onChange={handleScriptLengthChange}
+                  label="Script Length"
+                  onChange={(e) => setScriptLength(e.target.value)}
                 >
                   <MenuItem value="1h">1 Hour</MenuItem>
                   <MenuItem value="2h">2 Hours</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
-
-            <Grid item xs={12} sm={6}>
-              <Typography variant="body1">
-                Estimated Cost: ${estimatedCost.toFixed(2)}
-              </Typography>
-            </Grid>
           </Grid>
+        </Box>
 
-          {/* VOICE SELECTION */}
-          <FormControl fullWidth sx={{ mb: 2 }}>
-            <InputLabel>Voice</InputLabel>
-            <Select value={voice} label="Voice" onChange={handleVoiceChange}>
-              <MenuItem value="attenborough">Similar to David Attenborough</MenuItem>
-              <MenuItem value="freeman">Similar to Morgan Freeman</MenuItem>
-              <MenuItem value="genericUK">Generic English (UK)</MenuItem>
-              <MenuItem value="genericUS">Generic English (US)</MenuItem>
-            </Select>
-          </FormControl>
-
-          {/* SCRIPT TEXT AREA */}
+        {/* GENERATE SCRIPT */}
+        <Box mb={3}>
+          <Typography variant="h6" gutterBottom>Script</Typography>
           <TextField
             fullWidth
             multiline
-            rows={6}
-            variant="outlined"
-            placeholder="Your script will appear here..."
+            rows={8}
             value={script}
             onChange={(e) => setScript(e.target.value)}
-            sx={{ mb: 2 }}
           />
-
-          {/* GENERATE SCRIPT BUTTON */}
           <Button
             variant="contained"
             onClick={handleGenerateScript}
             startIcon={<PurpleMagicWandIcon />}
-            sx={{ backgroundColor: '#9c27b0' }}
+            sx={{ mt: 2, backgroundColor: '#9c27b0' }}
           >
             Generate Script
           </Button>
         </Box>
 
-        {/* GENERATE VIDEO */}
+        {/* GENERATE IMAGE */}
         <Box mb={3}>
-          <Typography variant="h5" gutterBottom>
-            Compile Video
-          </Typography>
+          <Typography variant="h6" gutterBottom>Generate Image (DALL·E)</Typography>
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel>Image Size</InputLabel>
+            <Select
+              value={imageSize}
+              label="Image Size"
+              onChange={(e) => setImageSize(e.target.value)}
+            >
+              <MenuItem value="256x256">256x256</MenuItem>
+              <MenuItem value="512x512">512x512</MenuItem>
+              <MenuItem value="1024x1024">1024x1024</MenuItem>
+            </Select>
+          </FormControl>
           <Button
             variant="contained"
-            onClick={handleGenerateVideo}
-            startIcon={<PurpleBrainIcon />}
+            onClick={handleGenerateImage}
             sx={{ backgroundColor: '#9c27b0' }}
           >
-            Generate Video
+            Generate Image
           </Button>
+          {imageUrl && (
+            <Card sx={{ width: 320, height: 180, mt: 2 }}>
+              <CardMedia
+                component="img"
+                image={imageUrl}
+                alt="Generated"
+                sx={{ width: '100%', height: '100%' }}
+              />
+            </Card>
+          )}
         </Box>
 
-        {/* COST BREAKDOWN */}
+        {/* GENERATE AUDIO */}
         <Box mb={3}>
-          <Typography variant="h5" gutterBottom>
-            Cost Breakdown
-          </Typography>
-          <Typography>Script Cost: ${costBreakdown.scriptCost.toFixed(2)}</Typography>
-          <Typography>Image Cost: ${costBreakdown.imageCost.toFixed(2)}</Typography>
-          <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mt: 1 }}>
-            Total: ${costBreakdown.total.toFixed(2)}
+          <Typography variant="h6" gutterBottom>Convert Script to Audio (TTS)</Typography>
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel>Voice Model</InputLabel>
+            <Select
+              value={ttsModel}
+              label="Voice Model"
+              onChange={(e) => setTtsModel(e.target.value)}
+            >
+              <MenuItem value="tts-1">TTS-1 (Fast)</MenuItem>
+              <MenuItem value="tts-1-hd">TTS-1 HD</MenuItem>
+            </Select>
+          </FormControl>
+          <Button
+            variant="contained"
+            onClick={handleGenerateAudio}
+            sx={{ backgroundColor: '#9c27b0' }}
+          >
+            Generate Audio
+          </Button>
+          {audioUrl && (
+            <Box sx={{ mt: 2 }}>
+              <audio controls src={audioUrl}>
+                Your browser does not support the audio element.
+              </audio>
+            </Box>
+          )}
+        </Box>
+
+        {/* COMPILE VIDEO */}
+        <Box mb={3}>
+          <Typography variant="h6" gutterBottom>Compile Final Video</Typography>
+          <Button
+            variant="contained"
+            onClick={handleCreateVideo}
+            sx={{ backgroundColor: '#9c27b0' }}
+          >
+            Create Video
+          </Button>
+          {videoUrl && (
+            <Box sx={{ mt: 2 }}>
+              <Typography>Final Video:</Typography>
+              <video controls src={videoUrl} style={{ width: '100%', maxWidth: '600px' }} />
+            </Box>
+          )}
+        </Box>
+
+        {/* COST DISPLAY */}
+        <Box mb={3}>
+          <Typography variant="h6">
+            Total Cost: ${cost.toFixed(2)}
           </Typography>
         </Box>
       </Container>

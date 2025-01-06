@@ -21,3 +21,12 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+
+# .gitignore
+venv/
+__pycache__/
+*.pyc
+*.log
+*.mp4
+# any other large artifacts

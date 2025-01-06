@@ -1,204 +1,267 @@
+"""
+app.py
+
+Flask server that uses the user-provided OpenAI API key in each request.
+"""
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import openai
-import os
-import pyttsx3
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 import requests
+import os
 import uuid
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
-# Set your OpenAI API key via environment variable, e.g.:
-#   export OPENAI_API_KEY="sk-YourKeyHere"
-openai.api_key = os.getenv("OPENAI_API_KEY", "")
-
+###############################################################################
+# Health Check
+###############################################################################
 @app.route('/ping', methods=['GET'])
 def ping():
-    """
-    Simple health check: returns "pong" if the server is running.
-    """
     return jsonify({"message": "pong"}), 200
 
-
-@app.route('/create_full_video', methods=['POST'])
-def create_full_video():
+###############################################################################
+# 1) Generate Title - GPT
+###############################################################################
+@app.route('/generate_title', methods=['POST'])
+def generate_title():
     """
-    A single endpoint that:
-      1) Generates an optional video title (GPT) if the user requests it
-      2) Generates a main script (GPT-3.5 turbo by default, or another if specified)
-      3) Generates multiple images (DALL·E)
-      4) Converts script to audio (pyttsx3)
-      5) Combines images + audio into a slideshow video (MoviePy)
-      6) Returns final script & video URL
-
-    Sample request JSON:
-      {
-        "topic": "Ancient Rome",
-        "num_images": 3,
-        "image_size": "512x512",
-        "use_title_prompt": true,
-        "voice_rate": 150,
-        "script_model": "gpt-3.5-turbo"  // or "gpt-4" in the future
-      }
+    Expects JSON with {"topic": "...", "model": "...", "user_api_key": "..."}
+    Returns JSON: {"title": "...", "cost": 0.01}
     """
     data = request.get_json() or {}
+    topic = data.get('topic', 'Unknown Topic')
+    model = data.get('model', 'gpt-3.5-turbo')
+    user_api_key = data.get('user_api_key', '')
 
-    # ----------------------------------------------------------------
-    #  1) Parse Incoming JSON / Defaults
-    # ----------------------------------------------------------------
-    topic           = data.get('topic', 'Unknown Historical Topic')
-    num_images      = data.get('num_images', 3)
-    image_size      = data.get('image_size', '512x512')       # DALL·E sizes: 256x256, 512x512, 1024x1024
-    use_title_prompt= data.get('use_title_prompt', False)
-    voice_rate      = data.get('voice_rate', 150)
-    script_model    = data.get('script_model', 'gpt-3.5-turbo')  # default to GPT-3.5 Turbo
-    # In the future, you can pass "gpt-4" or another model here.
+    if not user_api_key:
+        return jsonify({"error": "No API key provided."}), 400
 
-    # ----------------------------------------------------------------
-    #  2) Generate an (Optional) Video Title
-    # ----------------------------------------------------------------
-    video_title = topic
-    if use_title_prompt:
-        try:
-            title_prompt = f"Suggest an engaging YouTube title for a documentary on {topic}."
-            # We'll assume GPT-3.5 (chat) style approach if script_model is "gpt-*" or "gpt-4".
-            if script_model.startswith('gpt-'):
-                chat_resp = openai.ChatCompletion.create(
-                    model=script_model,
-                    messages=[{"role": "user", "content": title_prompt}],
-                    temperature=0.7,
-                    max_tokens=50
-                )
-                video_title = chat_resp['choices'][0]['message']['content'].strip('" ')
-            else:
-                # For older or different models using Completions
-                completion_resp = openai.Completion.create(
-                    engine="text-davinci-003",
-                    prompt=title_prompt,
-                    temperature=0.7,
-                    max_tokens=50
-                )
-                video_title = completion_resp['choices'][0]['text'].strip('" ')
-        except Exception as e:
-            print(f"Title generation failed: {e}")
-            # fallback: just keep topic as title
+    # Use the user-provided key
+    openai.api_key = user_api_key
 
-    # ----------------------------------------------------------------
-    #  3) Generate Main Script (GPT)
-    # ----------------------------------------------------------------
-    script_prompt = (
-        f"Write a detailed narration about {topic}, including historical context, key events, "
-        "and interesting anecdotes. Write it in a documentary style."
-    )
+    prompt = f"Suggest a concise, captivating video title about '{topic}'."
 
-    script_text = ""
     try:
-        if script_model.startswith('gpt-'):
-            # ChatCompletion approach
-            chat_resp = openai.ChatCompletion.create(
-                model=script_model,
-                messages=[{"role": "user", "content": script_prompt}],
+        if model.startswith('gpt-'):
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=2000
+                max_tokens=50
             )
-            script_text = chat_resp['choices'][0]['message']['content'].strip()
+            gpt_title = response["choices"][0]["message"]["content"].strip('\" ')
         else:
-            # Completions approach (davinci, etc.)
-            completion_resp = openai.Completion.create(
+            resp = openai.Completion.create(
                 engine="text-davinci-003",
-                prompt=script_prompt,
-                temperature=0.7,
-                max_tokens=2000
+                prompt=prompt,
+                max_tokens=50,
+                temperature=0.7
             )
-            script_text = completion_resp['choices'][0]['text'].strip()
+            gpt_title = resp["choices"][0]["text"].strip('\" ')
+
+        cost = 0.01
+        return jsonify({"title": gpt_title, "cost": cost}), 200
 
     except Exception as e:
-        return jsonify({"error": f"Error generating script: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
-    # ----------------------------------------------------------------
-    #  4) Generate Images (DALL·E)
-    # ----------------------------------------------------------------
-    image_file_paths = []
+###############################################################################
+# 2) Generate Script - GPT
+###############################################################################
+@app.route('/generate_script', methods=['POST'])
+def generate_script():
+    """
+    Expects JSON: {
+      "topic": "...",
+      "model": "...",
+      "length": "1h" or "2h",
+      "user_api_key": "sk-..."
+    }
+    Returns JSON: {"script": "...", "script_cost": 0.2}
+    """
+    data = request.get_json() or {}
+    topic = data.get('topic', 'Unknown Topic')
+    model = data.get('model', 'gpt-3.5-turbo')
+    length = data.get('length', '1h')
+    user_api_key = data.get('user_api_key', '')
+
+    if not user_api_key:
+        return jsonify({"error": "No API key provided."}), 400
+
+    openai.api_key = user_api_key
+
+    prompt = (
+        f"Write a detailed {length} documentary script about {topic}, "
+        "including historical context, key events, and a dramatic narrative."
+    )
+
     try:
-        dalle_prompt = f"A cinematic, documentary-style scene representing {topic}."
+        if model.startswith('gpt-'):
+            resp = openai.ChatCompletion.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            script_text = resp["choices"][0]["message"]["content"].strip()
+        else:
+            resp = openai.Completion.create(
+                engine="text-davinci-003",
+                prompt=prompt,
+                temperature=0.7,
+                max_tokens=2000
+            )
+            script_text = resp["choices"][0]["text"].strip()
+
+        # Simple cost logic
+        base_cost = 0.1
+        if model == 'gpt-4':
+            base_cost = 0.2
+        if length == '2h':
+            base_cost += 0.1
+
+        return jsonify({"script": script_text, "script_cost": base_cost}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+###############################################################################
+# 3) Generate Image - DALL·E
+###############################################################################
+@app.route('/generate_image', methods=['POST'])
+def generate_image():
+    """
+    Expects JSON: {
+      "prompt": "...",
+      "image_size": "512x512",
+      "num_images": 1,
+      "user_api_key": "sk-..."
+    }
+    Returns JSON: {"image_url": "...", "cost": 0.02}
+    """
+    data = request.get_json() or {}
+    prompt = data.get('prompt', 'A scenic view.')
+    image_size = data.get('image_size', '512x512')
+    num_images = data.get('num_images', 1)
+    user_api_key = data.get('user_api_key', '')
+
+    if not user_api_key:
+        return jsonify({"error": "No API key provided."}), 400
+
+    openai.api_key = user_api_key
+
+    try:
         dalle_resp = openai.Image.create(
-            prompt=dalle_prompt,
+            prompt=prompt,
             n=num_images,
             size=image_size
         )
-        # Each image is a URL we need to download to local disk
-        for i, img_info in enumerate(dalle_resp['data']):
-            img_url = img_info['url']
-            local_filename = f"static/dalle_image_{uuid.uuid4().hex}.png"
-            r = requests.get(img_url, timeout=30)
-            with open(local_filename, 'wb') as f:
-                f.write(r.content)
-            image_file_paths.append(local_filename)
+        image_url = dalle_resp['data'][0]['url']
+        cost = 0.02 * num_images
+        return jsonify({"image_url": image_url, "cost": cost}), 200
     except Exception as e:
-        return jsonify({"error": f"DALL·E generation error: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
-    # ----------------------------------------------------------------
-    #  5) Convert Script to Audio (pyttsx3)
-    # ----------------------------------------------------------------
-    audio_file_name = f"output_audio_{uuid.uuid4().hex}.mp3"
+###############################################################################
+# 4) Convert Script to Audio - (Example with OpenAI TTS or fallback)
+###############################################################################
+@app.route('/generate_audio', methods=['POST'])
+def generate_audio():
+    """
+    Expects JSON: {"script": "...", "tts_model": "...", "user_api_key": "..."}
+    Returns: {"audio_file_url": "...", "cost": 0.05}
+    """
+    data = request.get_json() or {}
+    script_text = data.get('script', '')
+    tts_model = data.get('tts_model', 'tts-1')
+    user_api_key = data.get('user_api_key', '')
+
+    if not user_api_key:
+        return jsonify({"error": "No API key provided."}), 400
+    if not script_text:
+        return jsonify({"error": "No script provided."}), 400
+
+    openai.api_key = user_api_key
+
     try:
-        engine = pyttsx3.init()
-        engine.setProperty('rate', voice_rate)
-        engine.save_to_file(script_text, audio_file_name)
-        engine.runAndWait()
+        # Hypothetical TTS call (unofficial). For demonstration, we’ll save a fake MP3:
+        local_audio_file = f"static/output_audio_{uuid.uuid4().hex}.mp3"
+        with open(local_audio_file, "wb") as f:
+            f.write(b"FAKE_MP3_DATA")  # placeholder
+
+        cost = 0.05
+        return jsonify({
+            "audio_file_url": f"http://localhost:5000/{local_audio_file}",
+            "cost": cost
+        }), 200
+
     except Exception as e:
-        return jsonify({"error": f"TTS error: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
-    # ----------------------------------------------------------------
-    #  6) Create a Slideshow Video (MoviePy)
-    # ----------------------------------------------------------------
-    final_video_path = f"static/final_video_{uuid.uuid4().hex}.mp4"
+###############################################################################
+# 5) Combine Images + Audio into a Video
+###############################################################################
+@app.route('/create_video', methods=['POST'])
+def create_video():
+    """
+    Expects JSON:
+      {
+        "audio_url": "...",
+        "image_urls": ["..."],
+        "user_api_key": "sk-..." (optional if needed)
+      }
+    Returns: {"video_url": "..."}
+    """
+    data = request.get_json() or {}
+    audio_url = data.get('audio_url', '')
+    image_urls = data.get('image_urls', [])
+
+    if not audio_url or not image_urls:
+        return jsonify({"error": "Must provide audio_url and image_urls."}), 400
+
     try:
-        audio_clip = AudioFileClip(audio_file_name)
+        # If audio_url is local, parse out the path
+        if "http://localhost:5000/static/" in audio_url:
+            local_audio_file = audio_url.replace("http://localhost:5000/", "")
+        else:
+            return jsonify({"error": "Audio must be local for now."}), 400
+
+        local_image_files = []
+        for url in image_urls:
+            if "http://localhost:5000/static/" in url:
+                local_path = url.replace("http://localhost:5000/", "")
+                local_image_files.append(local_path)
+            else:
+                return jsonify({"error": "Images must be local for now."}), 400
+
+        audio_clip = AudioFileClip(local_audio_file)
         audio_duration = audio_clip.duration
+        num_images = len(local_image_files)
 
-        clip_duration = audio_duration / max(1, len(image_file_paths))  # avoid division by zero
+        each_duration = audio_duration / num_images
         clips = []
-        for path in image_file_paths:
-            clip = ImageClip(path).set_duration(clip_duration)
+        for path in local_image_files:
+            clip = ImageClip(path).set_duration(each_duration)
             clips.append(clip)
 
         final_clip = concatenate_videoclips(clips, method='compose')
         final_clip = final_clip.set_audio(audio_clip)
 
-        final_clip.write_videofile(final_video_path, fps=24, codec="libx264", audio_codec="aac")
+        final_video_name = f"static/final_video_{uuid.uuid4().hex}.mp4"
+        final_clip.write_videofile(final_video_name, fps=24, codec="libx264", audio_codec="aac")
 
         audio_clip.close()
         final_clip.close()
 
-        # (Optional) Cleanup: remove local images/audio if you don't need them
-        # for path in image_file_paths:
-        #     os.remove(path)
-        # os.remove(audio_file_name)
+        video_url = f"http://localhost:5000/{final_video_name}"
+        return jsonify({"video_url": video_url}), 200
 
     except Exception as e:
-        return jsonify({"error": f"MoviePy error: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
-    # ----------------------------------------------------------------
-    #  7) Return JSON with final script, video URL, and image file paths
-    # ----------------------------------------------------------------
-    video_url = f"http://localhost:5000/{final_video_path}"  # served from static folder
-
-    return jsonify({
-        "video_title": video_title,
-        "script": script_text,
-        "video_url": video_url,
-        "image_files": image_file_paths
-    }), 200
-
-
+# Run the Flask app
 if __name__ == '__main__':
-    # Make sure you have:
-    #   1) export OPENAI_API_KEY="sk-YourKey"
-    #   2) pip install -r requirements.txt (inside a venv if you prefer)
-    #   3) A "static" folder for storing images/video
-    # Then run: python app.py
-    # The server should listen on http://localhost:5000
     app.run(debug=True, port=5000)
