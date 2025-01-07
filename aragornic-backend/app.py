@@ -11,6 +11,7 @@ import requests
 import os
 import uuid
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
+from elevenlabs import ElevenLabs
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -168,37 +169,51 @@ def generate_image():
 ###############################################################################
 # 4) Convert Script to Audio - (Example with OpenAI TTS or fallback)
 ###############################################################################
-@app.route('/generate_audio', methods=['POST'])
-def generate_audio():
+@app.route('/generate_audio_elevenlabs', methods=['POST'])
+def generate_audio_elevenlabs():
     """
-    Expects JSON: {"script": "...", "tts_model": "...", "user_api_key": "..."}
-    Returns: {"audio_file_url": "...", "cost": 0.05}
+    Expects JSON: {"script": "...", "voice_id": "...", "elevenlabs_api_key": "..."}
+    Returns: {"audio_file_url": "..."}
     """
     data = request.get_json() or {}
     script_text = data.get('script', '')
-    tts_model = data.get('tts_model', 'tts-1')
-    user_api_key = data.get('user_api_key', '')
+    voice_id = data.get('voice_id', '21m00Tcm4TlvDq8ikWAM')  # Default voice ID
+    elevenlabs_api_key = data.get('elevenlabs_api_key', '')
 
-    if not user_api_key:
-        return jsonify({"error": "No API key provided."}), 400
+    if not elevenlabs_api_key:
+        return jsonify({"error": "No ElevenLabs API key provided."}), 400
     if not script_text:
         return jsonify({"error": "No script provided."}), 400
 
-    openai.api_key = user_api_key
+    # Ensure the static directory exists
+    static_dir = 'static'
+    if not os.path.exists(static_dir):
+        os.makedirs(static_dir)
+
+    headers = {
+        'xi-api-key': elevenlabs_api_key,
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'text': script_text,
+        'model_id': 'eleven_multilingual_v2'  # Specify the desired model
+    }
+    tts_url = f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}'
 
     try:
-        # Hypothetical TTS call (unofficial). For demonstration, we’ll save a fake MP3:
-        local_audio_file = f"static/output_audio_{uuid.uuid4().hex}.mp3"
-        with open(local_audio_file, "wb") as f:
-            f.write(b"FAKE_MP3_DATA")  # placeholder
+        response = requests.post(tts_url, headers=headers, json=payload)
+        response.raise_for_status()
 
-        cost = 0.05
+        # Save the audio file locally
+        local_audio_file = f"{static_dir}/output_audio_{uuid.uuid4().hex}.mp3"
+        with open(local_audio_file, "wb") as f:
+            f.write(response.content)
+
         return jsonify({
-            "audio_file_url": f"http://localhost:5000/{local_audio_file}",
-            "cost": cost
+            "audio_file_url": f"http://localhost:5000/{local_audio_file}"
         }), 200
 
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
 ###############################################################################
@@ -222,21 +237,38 @@ def create_video():
     if not audio_url or not image_urls:
         return jsonify({"error": "Must provide audio_url and image_urls."}), 400
 
+    # Ensure the static directory exists
+    static_dir = 'static'
+    if not os.path.exists(static_dir):
+        os.makedirs(static_dir)
+
     try:
-        # If audio_url is local, parse out the path
+        # Handle audio file
         if "http://localhost:5000/static/" in audio_url:
             local_audio_file = audio_url.replace("http://localhost:5000/", "")
         else:
             return jsonify({"error": "Audio must be local for now."}), 400
 
+        # Handle image files
         local_image_files = []
         for url in image_urls:
             if "http://localhost:5000/static/" in url:
+                # Local image file
                 local_path = url.replace("http://localhost:5000/", "")
                 local_image_files.append(local_path)
             else:
-                return jsonify({"error": "Images must be local for now."}), 400
+                # Download remote image
+                response = requests.get(url)
+                if response.status_code == 200:
+                    image_name = f"{uuid.uuid4().hex}.jpg"
+                    local_path = os.path.join(static_dir, image_name)
+                    with open(local_path, "wb") as f:
+                        f.write(response.content)
+                    local_image_files.append(local_path)
+                else:
+                    return jsonify({"error": f"Failed to download image: {url}"}), 400
 
+        # Create video
         audio_clip = AudioFileClip(local_audio_file)
         audio_duration = audio_clip.duration
         num_images = len(local_image_files)
@@ -250,7 +282,7 @@ def create_video():
         final_clip = concatenate_videoclips(clips, method='compose')
         final_clip = final_clip.set_audio(audio_clip)
 
-        final_video_name = f"static/final_video_{uuid.uuid4().hex}.mp4"
+        final_video_name = f"{static_dir}/final_video_{uuid.uuid4().hex}.mp4"
         final_clip.write_videofile(final_video_name, fps=24, codec="libx264", audio_codec="aac")
 
         audio_clip.close()

@@ -16,6 +16,7 @@ import {
   Select,
   FormControl,
   InputLabel,
+  CircularProgress,
   Box
 } from '@mui/material';
 import {
@@ -33,9 +34,11 @@ function App() {
   const [script, setScript] = useState('');
   const [imageSize, setImageSize] = useState('512x512');
   const [imageUrl, setImageUrl] = useState('');
-  const [ttsModel, setTtsModel] = useState('tts-1');
+  const [ttsModel, setTtsModel] = useState('21m00Tcm4TlvDq8ikWAM'); // Default voice model for ElevenLabs
   const [audioUrl, setAudioUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
+  const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
+  const [loading, setLoading] = useState(false); // Loading state for audio generation
 
   // (Optional) cost
   const [cost, setCost] = useState(0);
@@ -143,24 +146,26 @@ function App() {
   };
 
   // Generate Audio (TTS)
+  // Generate Audio (TTS)
   const handleGenerateAudio = async () => {
-    if (!openAiKey) {
-      alert('Please enter your OpenAI API key.');
+    if (!elevenLabsApiKey) {
+      alert('Please enter your Eleven Labs API key.');
       return;
     }
     if (!script) {
-      alert('Please generate a script first.');
+      alert('Please enter a script.');
       return;
     }
 
+    setLoading(true); // Start loading
     try {
-      const res = await fetch('http://localhost:5000/generate_audio', {
+      const res = await fetch('http://localhost:5000/generate_audio_elevenlabs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script,
-          tts_model: ttsModel,
-          user_api_key: openAiKey
+          voice_id: ttsModel,
+          elevenlabs_api_key: elevenLabsApiKey
         })
       });
       const data = await res.json();
@@ -171,11 +176,10 @@ function App() {
       if (data.audio_file_url) {
         setAudioUrl(data.audio_file_url);
       }
-      if (data.cost) {
-        setCost((prev) => prev + data.cost);
-      }
     } catch (err) {
       console.error('Audio generation error:', err);
+    } finally {
+      setLoading(false); // End loading
     }
   };
 
@@ -349,34 +353,77 @@ function App() {
         </Box>
 
         {/* GENERATE AUDIO */}
+        <Container sx={{ mt: 4 }}>
+        {/* Eleven Labs API Key */}
         <Box mb={3}>
-          <Typography variant="h6" gutterBottom>Convert Script to Audio (TTS)</Typography>
-          <FormControl fullWidth sx={{ mb: 2 }}>
+          <Typography variant="h6">Eleven Labs API Key</Typography>
+          <TextField
+            fullWidth
+            placeholder="Enter your Eleven Labs API Key"
+            value={elevenLabsApiKey}
+            onChange={(e) => setElevenLabsApiKey(e.target.value)}
+            sx={{ mb: 2 }}
+          />
+        </Box>
+
+        {/* Script Input */}
+        <Box mb={3}>
+          <Typography variant="h6">Script</Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={8}
+            placeholder="Enter your script here..."
+            value={script}
+            onChange={(e) => setScript(e.target.value)}
+          />
+        </Box>
+
+        {/* Voice Model Selection */}
+        <Box mb={3}>
+          <FormControl fullWidth>
             <InputLabel>Voice Model</InputLabel>
             <Select
               value={ttsModel}
               label="Voice Model"
               onChange={(e) => setTtsModel(e.target.value)}
             >
-              <MenuItem value="tts-1">TTS-1 (Fast)</MenuItem>
-              <MenuItem value="tts-1-hd">TTS-1 HD</MenuItem>
+              <MenuItem value="21m00Tcm4TlvDq8ikWAM">Rachel</MenuItem>
+              <MenuItem value="29vD33N1CtxCmqQRPOHJ">Drew</MenuItem>
+              {/* Add more voices as needed */}
             </Select>
           </FormControl>
+        </Box>
+
+        {/* Play Audio Button */}
+        {audioUrl && (
+          <Box mb={3}>
+            <Typography variant="h6">Preview Audio</Typography>
+            <audio controls src={audioUrl} style={{ width: '100%' }}>
+              Your browser does not support the audio element.
+            </audio>
+          </Box>
+        )}
+
+        {/* Generate Audio Button */}
+        <Box mb={3} textAlign="center">
           <Button
             variant="contained"
             onClick={handleGenerateAudio}
+            disabled={loading}
             sx={{ backgroundColor: '#9c27b0' }}
           >
-            Generate Audio
+            {loading ? (
+              <>
+                <CircularProgress size={24} sx={{ mr: 1 }} />
+                Generating Audio...
+              </>
+            ) : (
+              'Generate Audio'
+            )}
           </Button>
-          {audioUrl && (
-            <Box sx={{ mt: 2 }}>
-              <audio controls src={audioUrl}>
-                Your browser does not support the audio element.
-              </audio>
-            </Box>
-          )}
         </Box>
+      </Container>
 
         {/* COMPILE VIDEO */}
         <Box mb={3}>
