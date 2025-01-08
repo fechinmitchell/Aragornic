@@ -4,17 +4,23 @@ app.py
 Flask server that uses the user-provided OpenAI API key in each request.
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import openai
 import requests
 import os
 import uuid
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, ImageClip
+from moviepy.video.fx.resize import resize
+from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
 from elevenlabs import ElevenLabs
+import subprocess
 
+# Initialize the Flask app
 app = Flask(__name__, static_folder='static')
-CORS(app)
+
+# Enable CORS for all routes and methods
+CORS(app, supports_credentials=True, resources={r"/*": {"origins": "*"}})
 
 ###############################################################################
 # Health Check
@@ -228,7 +234,7 @@ def create_video():
         "image_urls": ["..."],
         "user_api_key": "sk-..." (optional if needed)
       }
-    Returns: {"video_url": "..."}
+    Returns: {"video_url": "...", "download_url": "..."}
     """
     data = request.get_json() or {}
     audio_url = data.get('audio_url', '')
@@ -253,11 +259,9 @@ def create_video():
         local_image_files = []
         for url in image_urls:
             if "http://localhost:5000/static/" in url:
-                # Local image file
                 local_path = url.replace("http://localhost:5000/", "")
                 local_image_files.append(local_path)
             else:
-                # Download remote image
                 response = requests.get(url)
                 if response.status_code == 200:
                     image_name = f"{uuid.uuid4().hex}.jpg"
@@ -289,10 +293,72 @@ def create_video():
         final_clip.close()
 
         video_url = f"http://localhost:5000/{final_video_name}"
-        return jsonify({"video_url": video_url}), 200
+        download_url = f"http://localhost:5000/download_video/{os.path.basename(final_video_name)}"
+        return jsonify({"video_url": video_url, "download_url": download_url}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+###############################################################################
+# 6) Download Video
+###############################################################################
+@app.route('/download_video', methods=['POST'])
+def download_video_post():
+    """
+    Allows downloading a video file after resizing or renaming it.
+    Expects JSON: {
+      "video_url": "...",
+      "width": 1920,
+      "height": 1080,
+      "file_name": "custom_name.mp4"
+    }
+    """
+    data = request.get_json() or {}
+    video_url = data.get('video_url')
+    width = data.get('width', 1920)
+    height = data.get('height', 1080)
+    file_name = data.get('file_name', 'final_video.mp4')
+
+    if not video_url:
+        return jsonify({"error": "No video URL provided."}), 400
+
+    try:
+        # Extract the local file path from the video URL
+        if "http://localhost:5000/static/" in video_url:
+            local_video_path = video_url.replace("http://localhost:5000/static/", "static/")
+        else:
+            return jsonify({"error": "Only local videos are supported for download."}), 400
+
+        # Resize video if necessary
+        resized_video_path = f"static/{uuid.uuid4().hex}_{file_name}"
+        clip = VideoFileClip(local_video_path)
+        resized_clip = clip.resize(height=height, width=width)
+        resized_clip.write_videofile(resized_video_path, codec="libx264")
+        clip.close()
+        resized_clip.close()
+
+        # Send the resized/renamed video to the client
+        static_dir = os.path.join(os.getcwd(), 'static')
+        return send_from_directory(static_dir, os.path.basename(resized_video_path), as_attachment=True)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@app.route('/download_video/<filename>')
+def download_video(filename):
+    try:
+        # Print debugging information
+        print(f"Attempting to download: {filename}")
+        print(f"Current working directory: {os.getcwd()}")
+        print(f"Files in static directory: {os.listdir('static')}")
+        
+        # Use the same static directory where videos are saved
+        return send_from_directory('static', filename, as_attachment=True)
+    except FileNotFoundError as e:
+        print(f"File not found error: {str(e)}")
+        return jsonify({'error': 'Video file not found'}), 404
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 # Run the Flask app
 if __name__ == '__main__':

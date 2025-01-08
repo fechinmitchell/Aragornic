@@ -38,7 +38,16 @@ function App() {
   const [audioUrl, setAudioUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
-  const [loading, setLoading] = useState(false); // Loading state for audio generation
+
+  // Loading states
+  const [loadingTitle, setLoadingTitle] = useState(false);
+  const [loadingScript, setLoadingScript] = useState(false);
+  const [loadingImage, setLoadingImage] = useState(false);
+  const [loadingVideo, setLoadingVideo] = useState(false);
+  const [loadingAudio, setLoadingAudio] = useState(false);
+
+  const [fileName, setFileName] = useState('');
+  const [screenSize, setScreenSize] = useState('1920x1080'); // Default to YouTube
 
   // (Optional) cost
   const [cost, setCost] = useState(0);
@@ -50,6 +59,7 @@ function App() {
       return;
     }
 
+    setLoadingTitle(true);
     try {
       const res = await fetch('http://localhost:5000/generate_title', {
         method: 'POST',
@@ -73,6 +83,8 @@ function App() {
       }
     } catch (err) {
       console.error('Title generation error:', err);
+    } finally {
+      setLoadingTitle(false);
     }
   };
 
@@ -83,6 +95,7 @@ function App() {
       return;
     }
 
+    setLoadingScript(true);
     try {
       const res = await fetch('http://localhost:5000/generate_script', {
         method: 'POST',
@@ -107,6 +120,8 @@ function App() {
       }
     } catch (err) {
       console.error('Script generation error:', err);
+    } finally {
+      setLoadingScript(false);
     }
   };
 
@@ -117,6 +132,7 @@ function App() {
       return;
     }
 
+    setLoadingImage(true);
     try {
       const prompt = `A cinematic, documentary-style scene representing ${topic}`;
       const res = await fetch('http://localhost:5000/generate_image', {
@@ -142,10 +158,11 @@ function App() {
       }
     } catch (err) {
       console.error('Image generation error:', err);
+    } finally {
+      setLoadingImage(false);
     }
   };
 
-  // Generate Audio (TTS)
   // Generate Audio (TTS)
   const handleGenerateAudio = async () => {
     if (!elevenLabsApiKey) {
@@ -157,7 +174,7 @@ function App() {
       return;
     }
 
-    setLoading(true); // Start loading
+    setLoadingAudio(true); // Start loading
     try {
       const res = await fetch('http://localhost:5000/generate_audio_elevenlabs', {
         method: 'POST',
@@ -179,7 +196,7 @@ function App() {
     } catch (err) {
       console.error('Audio generation error:', err);
     } finally {
-      setLoading(false); // End loading
+      setLoadingAudio(false); // End loading
     }
   };
 
@@ -190,6 +207,7 @@ function App() {
       return;
     }
 
+    setLoadingVideo(true);
     try {
       const res = await fetch('http://localhost:5000/create_video', {
         method: 'POST',
@@ -210,6 +228,36 @@ function App() {
       }
     } catch (err) {
       console.error('Video creation error:', err);
+    } finally {
+      setLoadingVideo(false);
+    }
+  };
+
+  // Download Video
+  const handleDownload = async () => {
+    // Extract the filename from the video URL
+    const filename = videoUrl.split('/').pop(); // Get the last part of the URL
+    
+    try {
+      const response = await fetch(`http://localhost:5000/download_video/${filename}`, {
+        method: 'GET',
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename; // Use the same filename
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+      } else {
+        console.error('Download failed');
+      }
+    } catch (error) {
+      console.error('Error downloading video:', error);
     }
   };
 
@@ -256,12 +304,14 @@ function App() {
               value={videoTitle}
               onChange={(e) => setVideoTitle(e.target.value)}
             />
-            <IconButton
+            <Button
               onClick={handleGenerateTitle}
+              disabled={loadingTitle}
+              startIcon={loadingTitle ? <CircularProgress size={20} /> : <PurpleMagicWandIcon />}
               sx={{ backgroundColor: '#9c27b0', color: 'white' }}
             >
-              <PurpleBrainIcon />
-            </IconButton>
+              {loadingTitle ? 'Generating Title...' : 'Generate Title'}
+            </Button>
           </Box>
         </Box>
 
@@ -311,10 +361,11 @@ function App() {
           <Button
             variant="contained"
             onClick={handleGenerateScript}
-            startIcon={<PurpleMagicWandIcon />}
+            disabled={loadingScript}
+            startIcon={loadingScript ? <CircularProgress size={20} /> : <PurpleMagicWandIcon />}
             sx={{ mt: 2, backgroundColor: '#9c27b0' }}
           >
-            Generate Script
+            {loadingScript ? 'Generating Script...' : 'Generate Script'}
           </Button>
         </Box>
 
@@ -336,9 +387,11 @@ function App() {
           <Button
             variant="contained"
             onClick={handleGenerateImage}
+            disabled={loadingImage}
+            startIcon={loadingImage ? <CircularProgress size={20} /> : <PurpleMagicWandIcon />}
             sx={{ backgroundColor: '#9c27b0' }}
           >
-            Generate Image
+            {loadingImage ? 'Generating Image...' : 'Generate Image'}
           </Button>
           {imageUrl && (
             <Card sx={{ width: 320, height: 180, mt: 2 }}>
@@ -410,17 +463,11 @@ function App() {
           <Button
             variant="contained"
             onClick={handleGenerateAudio}
-            disabled={loading}
+            disabled={loadingAudio}
+            startIcon={loadingAudio ? <CircularProgress size={20} /> : <PurpleMagicWandIcon />}
             sx={{ backgroundColor: '#9c27b0' }}
           >
-            {loading ? (
-              <>
-                <CircularProgress size={24} sx={{ mr: 1 }} />
-                Generating Audio...
-              </>
-            ) : (
-              'Generate Audio'
-            )}
+            {loadingAudio ? 'Generating Audio...' : 'Generate Audio'}
           </Button>
         </Box>
       </Container>
@@ -431,17 +478,52 @@ function App() {
           <Button
             variant="contained"
             onClick={handleCreateVideo}
-            sx={{ backgroundColor: '#9c27b0' }}
+            disabled={loadingVideo}
+            startIcon={loadingVideo ? <CircularProgress size={20} /> : <PurpleMagicWandIcon />}
+            sx={{ backgroundColor: '#9c27b0', mb: 2 }}
           >
-            Create Video
+            {loadingVideo ? 'Creating Video...' : 'Create Video'}
           </Button>
           {videoUrl && (
             <Box sx={{ mt: 2 }}>
               <Typography>Final Video:</Typography>
-              <video controls src={videoUrl} style={{ width: '100%', maxWidth: '600px' }} />
+              <video controls src={videoUrl} style={{ width: '100%', maxWidth: '600px', borderRadius: '8px' }} />
             </Box>
           )}
         </Box>
+
+        {/* DOWNLOAD BUTTON */}
+        {videoUrl && (
+        <Box sx={{ mb: 3, textAlign: 'left' }}>
+          <Typography variant="h6" gutterBottom>Download Options</Typography>
+          <TextField
+            label="File Name"
+            placeholder="Enter file name (without extension)"
+            onChange={(e) => setFileName(e.target.value)}
+            sx={{ mb: 2, width: '50%' }}
+          />
+          <FormControl sx={{ mb: 2, width: '50%' }}>
+            <InputLabel>Screen Size</InputLabel>
+            <Select
+              value={screenSize}
+              onChange={(e) => setScreenSize(e.target.value)}
+            >
+              <MenuItem value="1920x1080">YouTube (16:9)</MenuItem>
+              <MenuItem value="1080x1920">TikTok (9:16)</MenuItem>
+              <MenuItem value="1080x1080">Square (1:1)</MenuItem>
+            </Select>
+          </FormControl>
+          <Button
+              variant="contained"
+              startIcon={<PurpleMagicWandIcon />}
+              sx={{ backgroundColor: '#9c27b0' }}
+              onClick={handleDownload}
+            >
+              Download Video
+            </Button>
+        </Box>
+      )}
+
 
         {/* COST DISPLAY */}
         <Box mb={3}>
