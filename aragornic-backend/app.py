@@ -10,10 +10,11 @@ import openai
 import requests
 import os
 import uuid
+import io
+from pydub import AudioSegment
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, ImageClip
 from moviepy.video.fx.resize import resize
 from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
-from elevenlabs import ElevenLabs
 import subprocess
 
 # Initialize the Flask app
@@ -21,6 +22,95 @@ app = Flask(__name__, static_folder='static')
 
 # Enable CORS for all routes and methods
 CORS(app, supports_credentials=True, resources={r"/*": {"origins": "*"}})
+
+###############################################################################
+# Helper Function: Generate Voice Previews
+###############################################################################
+def generate_voice_previews(elevenlabs_api_key):
+    """
+    Generates a 5-second preview .mp3 file for each voice available to the user’s
+    ElevenLabs account. Stores the output in static/samples/{voice_id}.mp3.
+    ffmpeg must be installed for pydub to process audio.
+    """
+    samples_dir = os.path.join('static', 'samples')
+    if not os.path.exists(samples_dir):
+        try:
+            os.makedirs(samples_dir)
+            print(f"Created directory: {samples_dir}")
+        except Exception as e:
+            print(f"Error creating directory {samples_dir}: {e}")
+            return
+    else:
+        print(f"Directory already exists: {samples_dir}")
+
+    voices_url = 'https://api.elevenlabs.io/v1/voices'
+    headers = {'xi-api-key': elevenlabs_api_key}
+
+    try:
+        response = requests.get(voices_url, headers=headers)
+        response.raise_for_status()
+        voices_data = response.json()
+    except Exception as e:
+        print(f"Error fetching voices: {e}")
+        return
+
+    voices = voices_data.get('voices', [])
+    print(f"Found {len(voices)} voices.")
+
+    # Preview text used for all voices
+    preview_text = "This is Aragornic AI Video Creator."
+
+    for voice in voices:
+        voice_id = voice.get('id')
+        if not voice_id:
+            continue
+        print(f"Generating preview for voice: {voice_id}")
+
+        tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+        payload = {
+            'text': preview_text,
+            'model_id': 'eleven_multilingual_v2'
+        }
+        try:
+            tts_response = requests.post(
+                tts_url,
+                headers={**headers, 'Content-Type': 'application/json'},
+                json=payload
+            )
+            tts_response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Error generating audio for voice {voice_id}: {e}")
+            continue
+
+        try:
+            # Load the returned audio content using pydub
+            full_audio = AudioSegment.from_file(io.BytesIO(tts_response.content), format="mp3")
+            # Trim to 5 seconds
+            preview_audio = full_audio[:5000]
+            preview_path = os.path.join(samples_dir, f"{voice_id}.mp3")
+            preview_audio.export(preview_path, format="mp3")
+            print(f"Saved preview for voice {voice_id} at {preview_path}")
+        except Exception as e:
+            print(f"Error processing audio for voice {voice_id}: {e}")
+
+###############################################################################
+# Temporary Route: Trigger Generation of All Previews
+###############################################################################
+@app.route('/generate_all_previews', methods=['POST'])
+def generate_all_previews():
+    """
+    Expects JSON: {"elevenlabs_api_key": "..."}
+    Calls generate_voice_previews(...) to produce 5-second samples for all voices.
+    """
+    data = request.get_json() or {}
+    elevenlabs_api_key = data.get('elevenlabs_api_key')
+    if not elevenlabs_api_key:
+        return jsonify({"error": "No ElevenLabs API key provided."}), 400
+    try:
+        generate_voice_previews(elevenlabs_api_key)
+        return jsonify({"message": "Previews generated successfully."}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 ###############################################################################
 # Health Check
@@ -35,8 +125,8 @@ def ping():
 @app.route('/generate_title', methods=['POST'])
 def generate_title():
     """
-    Expects JSON with {"topic": "...", "model": "...", "user_api_key": "..."}
-    Returns JSON: {"title": "...", "cost": 0.01}
+    Expects: {"topic": "...", "model": "...", "user_api_key": "..."}
+    Returns: {"title": "...", "cost": 0.01}
     """
     data = request.get_json() or {}
     topic = data.get('topic', 'Unknown Topic')
@@ -46,9 +136,7 @@ def generate_title():
     if not user_api_key:
         return jsonify({"error": "No API key provided."}), 400
 
-    # Use the user-provided key
     openai.api_key = user_api_key
-
     prompt = f"Suggest a concise, captivating video title about '{topic}'."
 
     try:
@@ -81,13 +169,8 @@ def generate_title():
 @app.route('/generate_script', methods=['POST'])
 def generate_script():
     """
-    Expects JSON: {
-      "topic": "...",
-      "model": "...",
-      "length": "1h" or "2h",
-      "user_api_key": "sk-..."
-    }
-    Returns JSON: {"script": "...", "script_cost": 0.2}
+    Expects: {"topic": "...", "model": "...", "length": "1h" or "2h", "user_api_key": "..."}
+    Returns: {"script": "...", "script_cost": 0.1}
     """
     data = request.get_json() or {}
     topic = data.get('topic', 'Unknown Topic')
@@ -99,10 +182,10 @@ def generate_script():
         return jsonify({"error": "No API key provided."}), 400
 
     openai.api_key = user_api_key
-
     prompt = (
-        f"Write a detailed {length} documentary script about {topic}, "
-        "including historical context, key events, and a dramatic narrative."
+        f"Write a captivating and detailed {length} documentary story about {topic}. "
+        "Include historical context, key events, and weave them into a dramatic and engaging narrative in the style of Dan Carlin storytelling ability. "
+        "Make it flow naturally as one continuous story, free of lists or bullet points, with vivid descriptions and compelling storytelling."
     )
 
     try:
@@ -141,13 +224,8 @@ def generate_script():
 @app.route('/generate_image', methods=['POST'])
 def generate_image():
     """
-    Expects JSON: {
-      "prompt": "...",
-      "image_size": "512x512",
-      "num_images": 1,
-      "user_api_key": "sk-..."
-    }
-    Returns JSON: {"image_url": "...", "cost": 0.02}
+    Expects: {"prompt": "...", "image_size": "512x512", "num_images": 1, "user_api_key": "..."}
+    Returns: {"image_url": "...", "cost": 0.02}
     """
     data = request.get_json() or {}
     prompt = data.get('prompt', 'A scenic view.')
@@ -173,25 +251,49 @@ def generate_image():
         return jsonify({"error": str(e)}), 500
 
 ###############################################################################
-# 4) Convert Script to Audio - (Example with OpenAI TTS or fallback)
+# 4) List Voices Endpoint
+###############################################################################
+@app.route('/list_voices', methods=['GET'])
+def list_voices():
+    """
+    Expects: ?elevenlabs_api_key=...
+    Returns: {"voices": [...]}
+    """
+    elevenlabs_api_key = request.args.get('elevenlabs_api_key')
+    if not elevenlabs_api_key:
+        return jsonify({"error": "No API key provided."}), 400
+
+    headers = {'xi-api-key': elevenlabs_api_key}
+    voices_url = 'https://api.elevenlabs.io/v1/voices'
+    try:
+        response = requests.get(voices_url, headers=headers)
+        response.raise_for_status()
+        voices_data = response.json()
+        return jsonify({"voices": voices_data.get('voices', [])})
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": str(e)}), 500
+
+###############################################################################
+# 4) Generate Audio - ElevenLabs TTS
 ###############################################################################
 @app.route('/generate_audio_elevenlabs', methods=['POST'])
 def generate_audio_elevenlabs():
     """
-    Expects JSON: {"script": "...", "voice_id": "...", "elevenlabs_api_key": "..."}
+    Expects: {"script": "...", "voice_id": "...", "elevenlabs_api_key": "..."}
     Returns: {"audio_file_url": "..."}
     """
     data = request.get_json() or {}
     script_text = data.get('script', '')
-    voice_id = data.get('voice_id', '21m00Tcm4TlvDq8ikWAM')  # Default voice ID
+    voice_id = data.get('voice_id')  # <-- No default fallback
     elevenlabs_api_key = data.get('elevenlabs_api_key', '')
 
     if not elevenlabs_api_key:
         return jsonify({"error": "No ElevenLabs API key provided."}), 400
     if not script_text:
         return jsonify({"error": "No script provided."}), 400
+    if not voice_id:
+        return jsonify({"error": "No voice_id provided."}), 400  # <-- Error out if missing
 
-    # Ensure the static directory exists
     static_dir = 'static'
     if not os.path.exists(static_dir):
         os.makedirs(static_dir)
@@ -202,7 +304,7 @@ def generate_audio_elevenlabs():
     }
     payload = {
         'text': script_text,
-        'model_id': 'eleven_multilingual_v2'  # Specify the desired model
+        'model_id': 'eleven_multilingual_v2'
     }
     tts_url = f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}'
 
@@ -210,7 +312,6 @@ def generate_audio_elevenlabs():
         response = requests.post(tts_url, headers=headers, json=payload)
         response.raise_for_status()
 
-        # Save the audio file locally
         local_audio_file = f"{static_dir}/output_audio_{uuid.uuid4().hex}.mp3"
         with open(local_audio_file, "wb") as f:
             f.write(response.content)
@@ -228,12 +329,7 @@ def generate_audio_elevenlabs():
 @app.route('/create_video', methods=['POST'])
 def create_video():
     """
-    Expects JSON:
-      {
-        "audio_url": "...",
-        "image_urls": ["..."],
-        "user_api_key": "sk-..." (optional if needed)
-      }
+    Expects: {"audio_url": "...", "image_urls": ["..."], "user_api_key": "..."}
     Returns: {"video_url": "...", "download_url": "..."}
     """
     data = request.get_json() or {}
@@ -243,19 +339,16 @@ def create_video():
     if not audio_url or not image_urls:
         return jsonify({"error": "Must provide audio_url and image_urls."}), 400
 
-    # Ensure the static directory exists
     static_dir = 'static'
     if not os.path.exists(static_dir):
         os.makedirs(static_dir)
 
     try:
-        # Handle audio file
         if "http://localhost:5000/static/" in audio_url:
             local_audio_file = audio_url.replace("http://localhost:5000/", "")
         else:
             return jsonify({"error": "Audio must be local for now."}), 400
 
-        # Handle image files
         local_image_files = []
         for url in image_urls:
             if "http://localhost:5000/static/" in url:
@@ -272,7 +365,6 @@ def create_video():
                 else:
                     return jsonify({"error": f"Failed to download image: {url}"}), 400
 
-        # Create video
         audio_clip = AudioFileClip(local_audio_file)
         audio_duration = audio_clip.duration
         num_images = len(local_image_files)
@@ -298,20 +390,15 @@ def create_video():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
+
 ###############################################################################
-# 6) Download Video
+# 6) Download Video Endpoints
 ###############################################################################
 @app.route('/download_video', methods=['POST'])
 def download_video_post():
     """
-    Allows downloading a video file after resizing or renaming it.
-    Expects JSON: {
-      "video_url": "...",
-      "width": 1920,
-      "height": 1080,
-      "file_name": "custom_name.mp4"
-    }
+    Expects: {"video_url": "...", "width": 1920, "height": 1080, "file_name": "..."}
+    Returns: The resized/renamed video as a file download.
     """
     data = request.get_json() or {}
     video_url = data.get('video_url')
@@ -323,13 +410,11 @@ def download_video_post():
         return jsonify({"error": "No video URL provided."}), 400
 
     try:
-        # Extract the local file path from the video URL
         if "http://localhost:5000/static/" in video_url:
             local_video_path = video_url.replace("http://localhost:5000/static/", "static/")
         else:
             return jsonify({"error": "Only local videos are supported for download."}), 400
 
-        # Resize video if necessary
         resized_video_path = f"static/{uuid.uuid4().hex}_{file_name}"
         clip = VideoFileClip(local_video_path)
         resized_clip = clip.resize(height=height, width=width)
@@ -337,21 +422,20 @@ def download_video_post():
         clip.close()
         resized_clip.close()
 
-        # Send the resized/renamed video to the client
         static_dir = os.path.join(os.getcwd(), 'static')
         return send_from_directory(static_dir, os.path.basename(resized_video_path), as_attachment=True)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
+
 @app.route('/download_video/<filename>')
 def download_video(filename):
+    """
+    GET endpoint to download a specific file from the static directory.
+    """
     try:
-        # Print debugging information
         print(f"Attempting to download: {filename}")
         print(f"Current working directory: {os.getcwd()}")
         print(f"Files in static directory: {os.listdir('static')}")
-        
-        # Use the same static directory where videos are saved
         return send_from_directory('static', filename, as_attachment=True)
     except FileNotFoundError as e:
         print(f"File not found error: {str(e)}")

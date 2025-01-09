@@ -1,13 +1,12 @@
 // App.js
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AppBar,
   Toolbar,
   Typography,
   Container,
   TextField,
-  IconButton,
   Button,
   Grid,
   Card,
@@ -19,13 +18,10 @@ import {
   CircularProgress,
   Box
 } from '@mui/material';
-import {
-  PurpleBrainIcon,
-  PurpleMagicWandIcon
-} from './FakeIcons';  // or use MUI icons, e.g. @mui/icons-material
+import { PurpleMagicWandIcon } from './FakeIcons';  // or use any MUI icon
 
 function App() {
-  // State
+  // State variables
   const [openAiKey, setOpenAiKey] = useState('');
   const [topic, setTopic] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
@@ -34,10 +30,11 @@ function App() {
   const [script, setScript] = useState('');
   const [imageSize, setImageSize] = useState('512x512');
   const [imageUrl, setImageUrl] = useState('');
-  const [ttsModel, setTtsModel] = useState('21m00Tcm4TlvDq8ikWAM'); // Default voice model for ElevenLabs
+  const [ttsModel, setTtsModel] = useState(''); // Let user pick a voice
   const [audioUrl, setAudioUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
+  const [availableVoices, setAvailableVoices] = useState([]);
 
   // Loading states
   const [loadingTitle, setLoadingTitle] = useState(false);
@@ -47,40 +44,31 @@ function App() {
   const [loadingAudio, setLoadingAudio] = useState(false);
 
   const [fileName, setFileName] = useState('');
-  const [screenSize, setScreenSize] = useState('1920x1080'); // Default to YouTube
-
-  // (Optional) cost
+  const [screenSize, setScreenSize] = useState('1920x1080');
   const [cost, setCost] = useState(0);
 
-  // Generate Title
+  /*******************************
+   * 1) Generate Title
+   *******************************/
   const handleGenerateTitle = async () => {
     if (!openAiKey) {
       alert('Please enter your OpenAI API key.');
       return;
     }
-
     setLoadingTitle(true);
     try {
       const res = await fetch('http://localhost:5000/generate_title', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic,
-          model,
-          user_api_key: openAiKey
-        })
+        body: JSON.stringify({ topic, model, user_api_key: openAiKey })
       });
       const data = await res.json();
       if (data.error) {
         alert(data.error);
         return;
       }
-      if (data.title) {
-        setVideoTitle(data.title);
-      }
-      if (data.cost) {
-        setCost((prev) => prev + data.cost);
-      }
+      setVideoTitle(data.title || '');
+      if (data.cost) setCost((prev) => prev + data.cost);
     } catch (err) {
       console.error('Title generation error:', err);
     } finally {
@@ -88,13 +76,14 @@ function App() {
     }
   };
 
-  // Generate Script
+  /*******************************
+   * 2) Generate Script
+   *******************************/
   const handleGenerateScript = async () => {
     if (!openAiKey) {
       alert('Please enter your OpenAI API key.');
       return;
     }
-
     setLoadingScript(true);
     try {
       const res = await fetch('http://localhost:5000/generate_script', {
@@ -112,12 +101,8 @@ function App() {
         alert(data.error);
         return;
       }
-      if (data.script) {
-        setScript(data.script);
-      }
-      if (data.script_cost) {
-        setCost((prev) => prev + data.script_cost);
-      }
+      setScript(data.script || '');
+      if (data.script_cost) setCost((prev) => prev + data.script_cost);
     } catch (err) {
       console.error('Script generation error:', err);
     } finally {
@@ -125,13 +110,14 @@ function App() {
     }
   };
 
-  // Generate Image
+  /*******************************
+   * 3) Generate Image
+   *******************************/
   const handleGenerateImage = async () => {
     if (!openAiKey) {
       alert('Please enter your OpenAI API key.');
       return;
     }
-
     setLoadingImage(true);
     try {
       const prompt = `A cinematic, documentary-style scene representing ${topic}`;
@@ -150,12 +136,8 @@ function App() {
         alert(data.error);
         return;
       }
-      if (data.image_url) {
-        setImageUrl(data.image_url);
-      }
-      if (data.cost) {
-        setCost((prev) => prev + data.cost);
-      }
+      setImageUrl(data.image_url || '');
+      if (data.cost) setCost((prev) => prev + data.cost);
     } catch (err) {
       console.error('Image generation error:', err);
     } finally {
@@ -163,7 +145,46 @@ function App() {
     }
   };
 
-  // Generate Audio (TTS)
+  /*******************************
+   * 4) Fetching Voices (ElevenLabs)
+   *******************************/
+  const fetchVoices = async () => {
+    if (!elevenLabsApiKey) {
+      alert('Please enter your Eleven Labs API key.');
+      return;
+    }
+    try {
+      const res = await fetch(`http://localhost:5000/list_voices?elevenlabs_api_key=${elevenLabsApiKey}`);
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      console.log('Voices fetched:', data.voices);
+      setAvailableVoices(data.voices || []);
+    } catch (err) {
+      console.error('Error fetching voices:', err);
+    }
+  };
+
+  // When the user updates their Eleven Labs API key, fetch voices
+  useEffect(() => {
+    if (elevenLabsApiKey) {
+      fetchVoices();
+    }
+  }, [elevenLabsApiKey]);
+
+  // Auto-select the first voice if availableVoices is non-empty and ttsModel is still empty
+  useEffect(() => {
+    if (availableVoices.length > 0 && !ttsModel) {
+      setTtsModel(availableVoices[0].id);
+      console.log('Auto-selected voice:', availableVoices[0].id);
+    }
+  }, [availableVoices, ttsModel]);
+
+  /*******************************
+   * 5) Generate Audio (TTS)
+   *******************************/
   const handleGenerateAudio = async () => {
     if (!elevenLabsApiKey) {
       alert('Please enter your Eleven Labs API key.');
@@ -173,8 +194,12 @@ function App() {
       alert('Please enter a script.');
       return;
     }
+    if (!ttsModel) {
+      alert('Please select a voice.');
+      return;
+    }
 
-    setLoadingAudio(true); // Start loading
+    setLoadingAudio(true);
     try {
       const res = await fetch('http://localhost:5000/generate_audio_elevenlabs', {
         method: 'POST',
@@ -190,23 +215,22 @@ function App() {
         alert(data.error);
         return;
       }
-      if (data.audio_file_url) {
-        setAudioUrl(data.audio_file_url);
-      }
+      setAudioUrl(data.audio_file_url || '');
     } catch (err) {
       console.error('Audio generation error:', err);
     } finally {
-      setLoadingAudio(false); // End loading
+      setLoadingAudio(false);
     }
   };
 
-  // Create Final Video
+  /*******************************
+   * 6) Create Final Video
+   *******************************/
   const handleCreateVideo = async () => {
     if (!audioUrl || !imageUrl) {
       alert('Need at least one image and an audio file.');
       return;
     }
-
     setLoadingVideo(true);
     try {
       const res = await fetch('http://localhost:5000/create_video', {
@@ -215,7 +239,7 @@ function App() {
         body: JSON.stringify({
           audio_url: audioUrl,
           image_urls: [imageUrl],
-          user_api_key: openAiKey // optional if needed for logic
+          user_api_key: openAiKey
         })
       });
       const data = await res.json();
@@ -223,9 +247,7 @@ function App() {
         alert(data.error);
         return;
       }
-      if (data.video_url) {
-        setVideoUrl(data.video_url);
-      }
+      setVideoUrl(data.video_url || '');
     } catch (err) {
       console.error('Video creation error:', err);
     } finally {
@@ -233,22 +255,21 @@ function App() {
     }
   };
 
-  // Download Video
+  /*******************************
+   * 7) Download Final Video
+   *******************************/
   const handleDownload = async () => {
-    // Extract the filename from the video URL
-    const filename = videoUrl.split('/').pop(); // Get the last part of the URL
-    
+    const filename = videoUrl.split('/').pop();
     try {
       const response = await fetch(`http://localhost:5000/download_video/${filename}`, {
         method: 'GET',
       });
-      
       if (response.ok) {
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename; // Use the same filename
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(url);
@@ -261,6 +282,36 @@ function App() {
     }
   };
 
+  /*******************************
+   * 8) Generate Previews (Optional)
+   *******************************/
+  const handleGeneratePreviews = async () => {
+    if (!elevenLabsApiKey) {
+      alert('Please enter your Eleven Labs API key.');
+      return;
+    }
+    try {
+      const res = await fetch('http://localhost:5000/generate_all_previews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ elevenlabs_api_key: elevenLabsApiKey })
+      });
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+      } else {
+        alert(data.message || 'Previews generated successfully.');
+        // Optionally, fetchVoices() again if you want to refresh the voice list
+      }
+    } catch (err) {
+      console.error('Error generating previews:', err);
+      alert('Error generating previews.');
+    }
+  };
+
+  /*******************************
+   * RENDER
+   *******************************/
   return (
     <>
       <AppBar position="static" sx={{ backgroundColor: '#673ab7' }}>
@@ -283,9 +334,7 @@ function App() {
       <Container sx={{ mt: 4 }}>
         {/* TOPIC */}
         <Box mb={3}>
-          <Typography variant="h5" gutterBottom>
-            Topic
-          </Typography>
+          <Typography variant="h5" gutterBottom>Topic</Typography>
           <TextField
             fullWidth
             placeholder="E.g. Ancient Rome, World War II..."
@@ -407,70 +456,99 @@ function App() {
 
         {/* GENERATE AUDIO */}
         <Container sx={{ mt: 4 }}>
-        {/* Eleven Labs API Key */}
-        <Box mb={3}>
-          <Typography variant="h6">Eleven Labs API Key</Typography>
-          <TextField
-            fullWidth
-            placeholder="Enter your Eleven Labs API Key"
-            value={elevenLabsApiKey}
-            onChange={(e) => setElevenLabsApiKey(e.target.value)}
-            sx={{ mb: 2 }}
-          />
-        </Box>
-
-        {/* Script Input */}
-        <Box mb={3}>
-          <Typography variant="h6">Script</Typography>
-          <TextField
-            fullWidth
-            multiline
-            rows={8}
-            placeholder="Enter your script here..."
-            value={script}
-            onChange={(e) => setScript(e.target.value)}
-          />
-        </Box>
-
-        {/* Voice Model Selection */}
-        <Box mb={3}>
-          <FormControl fullWidth>
-            <InputLabel>Voice Model</InputLabel>
-            <Select
-              value={ttsModel}
-              label="Voice Model"
-              onChange={(e) => setTtsModel(e.target.value)}
-            >
-              <MenuItem value="21m00Tcm4TlvDq8ikWAM">Rachel</MenuItem>
-              <MenuItem value="29vD33N1CtxCmqQRPOHJ">Drew</MenuItem>
-              {/* Add more voices as needed */}
-            </Select>
-          </FormControl>
-        </Box>
-
-        {/* Play Audio Button */}
-        {audioUrl && (
           <Box mb={3}>
-            <Typography variant="h6">Preview Audio</Typography>
-            <audio controls src={audioUrl} style={{ width: '100%' }}>
-              Your browser does not support the audio element.
-            </audio>
+            <Typography variant="h6">Eleven Labs API Key</Typography>
+            <TextField
+              fullWidth
+              placeholder="Enter your Eleven Labs API Key"
+              value={elevenLabsApiKey}
+              onChange={(e) => setElevenLabsApiKey(e.target.value)}
+              sx={{ mb: 2 }}
+            />
+            {/* Temporary button to generate previews */}
+            <Button
+              variant="outlined"
+              onClick={handleGeneratePreviews}
+              sx={{ mb: 2 }}
+            >
+              Generate Previews
+            </Button>
           </Box>
-        )}
 
-        {/* Generate Audio Button */}
-        <Box mb={3} textAlign="center">
-          <Button
-            variant="contained"
-            onClick={handleGenerateAudio}
-            disabled={loadingAudio}
-            startIcon={loadingAudio ? <CircularProgress size={20} /> : <PurpleMagicWandIcon />}
-            sx={{ backgroundColor: '#9c27b0' }}
-          >
-            {loadingAudio ? 'Generating Audio...' : 'Generate Audio'}
-          </Button>
-        </Box>
-      </Container>
+          <Box mb={3}>
+            <Typography variant="h6">Script</Typography>
+            <TextField
+              fullWidth
+              multiline
+              rows={8}
+              placeholder="Enter your script here..."
+              value={script}
+              onChange={(e) => setScript(e.target.value)}
+            />
+          </Box>
+
+          <Box mb={3}>
+            <FormControl fullWidth>
+              <InputLabel>Voice Model</InputLabel>
+              <Select
+                value={ttsModel} // No placeholder value here
+                label="Voice Model"
+                onChange={(e) => {
+                  console.log('Voice selection changed to:', e.target.value);
+                  setTtsModel(e.target.value);
+                }}
+              >
+                {availableVoices.map((voice) => (
+                  <MenuItem key={voice.id} value={voice.id}>
+                    {voice.name || voice.id}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
+
+          {/* Show static preview if no generated audio yet */}
+          {!audioUrl && ttsModel && (
+            <Box mb={3}>
+              <Typography variant="h6">Preview of Selected Voice</Typography>
+              <audio
+                key={ttsModel}
+                controls
+                src={`/static/samples/${ttsModel}.mp3`}
+                style={{ width: '100%' }}
+              >
+                Your browser does not support the audio element.
+              </audio>
+            </Box>
+          )}
+
+          {/* Once audio is generated, show the generated audio preview */}
+          {audioUrl && (
+            <Box mb={3}>
+              <Typography variant="h6">Preview Audio</Typography>
+              <audio
+                key={audioUrl}
+                controls
+                src={audioUrl}
+                style={{ width: '100%' }}
+              >
+                Your browser does not support the audio element.
+              </audio>
+            </Box>
+          )}
+
+          <Box mb={3} textAlign="center">
+            <Button
+              variant="contained"
+              onClick={handleGenerateAudio}
+              disabled={loadingAudio}
+              startIcon={loadingAudio ? <CircularProgress size={20} /> : <PurpleMagicWandIcon />}
+              sx={{ backgroundColor: '#9c27b0' }}
+            >
+              {loadingAudio ? 'Generating Audio...' : 'Generate Audio'}
+            </Button>
+          </Box>
+        </Container>
 
         {/* COMPILE VIDEO */}
         <Box mb={3}>
@@ -487,33 +565,37 @@ function App() {
           {videoUrl && (
             <Box sx={{ mt: 2 }}>
               <Typography>Final Video:</Typography>
-              <video controls src={videoUrl} style={{ width: '100%', maxWidth: '600px', borderRadius: '8px' }} />
+              <video
+                controls
+                src={videoUrl}
+                style={{ width: '100%', maxWidth: '600px', borderRadius: '8px' }}
+              />
             </Box>
           )}
         </Box>
 
         {/* DOWNLOAD BUTTON */}
         {videoUrl && (
-        <Box sx={{ mb: 3, textAlign: 'left' }}>
-          <Typography variant="h6" gutterBottom>Download Options</Typography>
-          <TextField
-            label="File Name"
-            placeholder="Enter file name (without extension)"
-            onChange={(e) => setFileName(e.target.value)}
-            sx={{ mb: 2, width: '50%' }}
-          />
-          <FormControl sx={{ mb: 2, width: '50%' }}>
-            <InputLabel>Screen Size</InputLabel>
-            <Select
-              value={screenSize}
-              onChange={(e) => setScreenSize(e.target.value)}
-            >
-              <MenuItem value="1920x1080">YouTube (16:9)</MenuItem>
-              <MenuItem value="1080x1920">TikTok (9:16)</MenuItem>
-              <MenuItem value="1080x1080">Square (1:1)</MenuItem>
-            </Select>
-          </FormControl>
-          <Button
+          <Box sx={{ mb: 3, textAlign: 'left' }}>
+            <Typography variant="h6" gutterBottom>Download Options</Typography>
+            <TextField
+              label="File Name"
+              placeholder="Enter file name (without extension)"
+              onChange={(e) => setFileName(e.target.value)}
+              sx={{ mb: 2, width: '50%' }}
+            />
+            <FormControl sx={{ mb: 2, width: '50%' }}>
+              <InputLabel>Screen Size</InputLabel>
+              <Select
+                value={screenSize}
+                onChange={(e) => setScreenSize(e.target.value)}
+              >
+                <MenuItem value="1920x1080">YouTube (16:9)</MenuItem>
+                <MenuItem value="1080x1920">TikTok (9:16)</MenuItem>
+                <MenuItem value="1080x1080">Square (1:1)</MenuItem>
+              </Select>
+            </FormControl>
+            <Button
               variant="contained"
               startIcon={<PurpleMagicWandIcon />}
               sx={{ backgroundColor: '#9c27b0' }}
@@ -521,9 +603,8 @@ function App() {
             >
               Download Video
             </Button>
-        </Box>
-      )}
-
+          </Box>
+        )}
 
         {/* COST DISPLAY */}
         <Box mb={3}>
