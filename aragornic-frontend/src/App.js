@@ -18,7 +18,7 @@ import {
   CircularProgress,
   Box
 } from '@mui/material';
-import { PurpleMagicWandIcon } from './FakeIcons';  // or use any MUI icon
+import { PurpleMagicWandIcon } from './FakeIcons';  // or any MUI icon
 
 function App() {
   // State variables
@@ -154,7 +154,9 @@ function App() {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:5000/list_voices?elevenlabs_api_key=${elevenLabsApiKey}`);
+      const res = await fetch(
+        `http://localhost:5000/list_voices?elevenlabs_api_key=${elevenLabsApiKey}`
+      );
       const data = await res.json();
       if (data.error) {
         alert(data.error);
@@ -177,8 +179,10 @@ function App() {
   // Auto-select the first voice if availableVoices is non-empty and ttsModel is still empty
   useEffect(() => {
     if (availableVoices.length > 0 && !ttsModel) {
-      setTtsModel(availableVoices[0].id);
-      console.log('Auto-selected voice:', availableVoices[0].id);
+      console.log('First voice object:', availableVoices[0]);
+      // If each voice object is shaped like { "voice_id": "...", "name": "..." }
+      setTtsModel(availableVoices[0].voice_id);
+      console.log('Auto-selected voice:', availableVoices[0].voice_id);
     }
   }, [availableVoices, ttsModel]);
 
@@ -491,7 +495,7 @@ function App() {
             <FormControl fullWidth>
               <InputLabel>Voice Model</InputLabel>
               <Select
-                value={ttsModel} // No placeholder value here
+                value={ttsModel || ''}  // Prevent controlled/uncontrolled warning
                 label="Voice Model"
                 onChange={(e) => {
                   console.log('Voice selection changed to:', e.target.value);
@@ -499,8 +503,8 @@ function App() {
                 }}
               >
                 {availableVoices.map((voice) => (
-                  <MenuItem key={voice.id} value={voice.id}>
-                    {voice.name || voice.id}
+                  <MenuItem key={voice.voice_id} value={voice.voice_id}>
+                    {voice.name || voice.voice_id}
                   </MenuItem>
                 ))}
               </Select>
