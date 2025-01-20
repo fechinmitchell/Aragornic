@@ -3,9 +3,9 @@ app.py
 
 Flask server that uses the user-provided OpenAI API key in each request.
 """
-
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from werkzeug.utils import secure_filename  # <-- for safely saving uploads
 import openai
 import requests
 import os
@@ -223,12 +223,8 @@ def generate_script():
 ###############################################################################
 @app.route('/generate_image', methods=['POST'])
 def generate_image():
-    """
-    Expects: {"prompt": "...", "image_size": "512x512", "num_images": 1, "user_api_key": "..."}
-    Returns: {"image_url": "...", "cost": 0.02}
-    """
     data = request.get_json() or {}
-    prompt = data.get('prompt', 'A scenic view.')
+    user_prompt = data.get('prompt', 'A scenic view.')
     image_size = data.get('image_size', '512x512')
     num_images = data.get('num_images', 1)
     user_api_key = data.get('user_api_key', '')
@@ -238,9 +234,15 @@ def generate_image():
 
     openai.api_key = user_api_key
 
+    # Append style + "no text" instructions to the user's prompt
+    improved_prompt = (
+        f"{user_prompt}. "
+        "Scenic, photorealistic, cinematic lighting, ultra high resolution with absolutely no text, no letters, no words."
+    )
+
     try:
         dalle_resp = openai.Image.create(
-            prompt=prompt,
+            prompt=improved_prompt,
             n=num_images,
             size=image_size
         )
@@ -251,7 +253,42 @@ def generate_image():
         return jsonify({"error": str(e)}), 500
 
 ###############################################################################
-# 4) List Voices Endpoint
+# 4) Upload Image Endpoint (NEW)
+###############################################################################
+@app.route('/upload_image', methods=['POST'])
+def upload_image():
+    """
+    Allows the user to upload an image via multipart/form-data.
+    Returns {"image_url": "..."} which is a local URL that can be used in /create_video.
+    """
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part in request."}), 400
+
+    file = request.files['file']
+    if not file:
+        return jsonify({"error": "No file selected."}), 400
+
+    # Make sure 'static' exists
+    if not os.path.exists('static'):
+        os.makedirs('static')
+
+    filename = secure_filename(file.filename)
+    # Use a random prefix to avoid collisions
+    new_filename = f"{uuid.uuid4().hex}_{filename}"
+    save_path = os.path.join('static', new_filename)
+
+    try:
+        file.save(save_path)
+    except Exception as e:
+        return jsonify({"error": f"Could not save file: {str(e)}"}), 500
+
+    # Return a URL that references the static file
+    return jsonify({
+        "image_url": f"http://localhost:5000/{save_path}"
+    }), 200
+
+###############################################################################
+# 5) List Voices Endpoint
 ###############################################################################
 @app.route('/list_voices', methods=['GET'])
 def list_voices():
@@ -274,7 +311,7 @@ def list_voices():
         return jsonify({"error": str(e)}), 500
 
 ###############################################################################
-# 4) Generate Audio - ElevenLabs TTS
+# 6) Generate Audio - ElevenLabs TTS
 ###############################################################################
 @app.route('/generate_audio_elevenlabs', methods=['POST'])
 def generate_audio_elevenlabs():
@@ -292,7 +329,7 @@ def generate_audio_elevenlabs():
     if not script_text:
         return jsonify({"error": "No script provided."}), 400
     if not voice_id:
-        return jsonify({"error": "No voice_id provided."}), 400  # <-- Error out if missing
+        return jsonify({"error": "No voice_id provided."}), 400
 
     static_dir = 'static'
     if not os.path.exists(static_dir):
@@ -324,7 +361,7 @@ def generate_audio_elevenlabs():
         return jsonify({"error": str(e)}), 500
 
 ###############################################################################
-# 5) Combine Images + Audio into a Video
+# 7) Combine Images + Audio into a Video
 ###############################################################################
 @app.route('/create_video', methods=['POST'])
 def create_video():
@@ -344,6 +381,7 @@ def create_video():
         os.makedirs(static_dir)
 
     try:
+        # Make sure the audio is local
         if "http://localhost:5000/static/" in audio_url:
             local_audio_file = audio_url.replace("http://localhost:5000/", "")
         else:
@@ -352,9 +390,11 @@ def create_video():
         local_image_files = []
         for url in image_urls:
             if "http://localhost:5000/static/" in url:
+                # It's already in static
                 local_path = url.replace("http://localhost:5000/", "")
                 local_image_files.append(local_path)
             else:
+                # Attempt to download the image from a remote URL
                 response = requests.get(url)
                 if response.status_code == 200:
                     image_name = f"{uuid.uuid4().hex}.jpg"
@@ -392,7 +432,7 @@ def create_video():
         return jsonify({"error": str(e)}), 500
 
 ###############################################################################
-# 6) Download Video Endpoints
+# 8) Download Video Endpoints
 ###############################################################################
 @app.route('/download_video', methods=['POST'])
 def download_video_post():

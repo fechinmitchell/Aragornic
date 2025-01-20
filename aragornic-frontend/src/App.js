@@ -21,7 +21,33 @@ import {
 import { PurpleMagicWandIcon } from './FakeIcons';  // or any MUI icon
 
 function App() {
-  // State variables
+  /*******************************
+   * 1) Word Count & Duration
+   *******************************/
+  const getWordCount = (text) => {
+    return text.trim().split(/\s+/).filter(Boolean).length;
+  };
+
+  const estimateScriptDuration = (text, wpm = 150) => {
+    const words = getWordCount(text);
+    const totalMinutes = words / wpm;
+    const fullMinutes = Math.floor(totalMinutes);
+    const leftoverSeconds = Math.round((totalMinutes - fullMinutes) * 60);
+    return { fullMinutes, leftoverSeconds };
+  };
+
+  /*******************************
+   * 2) Approximate Token Calculation
+   *******************************/
+  // Simple rule of thumb: ~1 token per 0.75 words => tokens = words * (1 / 0.75) = words * 1.33
+  const approximateTokens = (text) => {
+    const words = getWordCount(text);
+    return Math.round(words / 0.75); // or Math.round(words * 1.33)
+  };
+
+  /*******************************
+   * STATE VARIABLES
+   *******************************/
   const [openAiKey, setOpenAiKey] = useState('');
   const [topic, setTopic] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
@@ -30,7 +56,7 @@ function App() {
   const [script, setScript] = useState('');
   const [imageSize, setImageSize] = useState('512x512');
   const [imageUrl, setImageUrl] = useState('');
-  const [ttsModel, setTtsModel] = useState(''); // Let user pick a voice
+  const [ttsModel, setTtsModel] = useState('');
   const [audioUrl, setAudioUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
@@ -43,9 +69,28 @@ function App() {
   const [loadingVideo, setLoadingVideo] = useState(false);
   const [loadingAudio, setLoadingAudio] = useState(false);
 
+  // File name, screen size, cost
   const [fileName, setFileName] = useState('');
   const [screenSize, setScreenSize] = useState('1920x1080');
   const [cost, setCost] = useState(0);
+
+  /*******************************
+   * Duration & Token Estimates
+   *******************************/
+  const { fullMinutes, leftoverSeconds } = estimateScriptDuration(script);
+  const scriptTokens = approximateTokens(script);
+
+  /*******************************
+   * AUTO-SET FILE NAME WHEN VIDEO TITLE IS READY
+   *******************************/
+  useEffect(() => {
+    // If we have a new videoUrl, a videoTitle, and the user hasn't typed a fileName yet,
+    // set the fileName to a sanitized version of videoTitle.
+    if (videoUrl && videoTitle && !fileName) {
+      const sanitized = videoTitle.replace(/[^a-zA-Z0-9_\-]+/g, '_');
+      setFileName(sanitized);
+    }
+  }, [videoUrl, videoTitle, fileName]);
 
   /*******************************
    * 1) Generate Title
@@ -120,7 +165,7 @@ function App() {
     }
     setLoadingImage(true);
     try {
-      const prompt = `A cinematic, documentary-style scene representing ${topic}`;
+      const prompt = `A cinematic, documentary-style scene representing ${topic}. Scenic, photorealistic, no text, no words, no lettering.`;
       const res = await fetch('http://localhost:5000/generate_image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -146,7 +191,7 @@ function App() {
   };
 
   /*******************************
-   * 4) Fetching Voices (ElevenLabs)
+   * 4) Fetching Voices
    *******************************/
   const fetchVoices = async () => {
     if (!elevenLabsApiKey) {
@@ -169,7 +214,6 @@ function App() {
     }
   };
 
-  // When the user updates their Eleven Labs API key, fetch voices
   useEffect(() => {
     if (elevenLabsApiKey) {
       fetchVoices();
@@ -180,7 +224,6 @@ function App() {
   useEffect(() => {
     if (availableVoices.length > 0 && !ttsModel) {
       console.log('First voice object:', availableVoices[0]);
-      // If each voice object is shaped like { "voice_id": "...", "name": "..." }
       setTtsModel(availableVoices[0].voice_id);
       console.log('Auto-selected voice:', availableVoices[0].voice_id);
     }
@@ -263,9 +306,14 @@ function App() {
    * 7) Download Final Video
    *******************************/
   const handleDownload = async () => {
-    const filename = videoUrl.split('/').pop();
+    if (!videoUrl) {
+      alert('No video URL to download.');
+      return;
+    }
+    const filenameFromUrl = videoUrl.split('/').pop();
+
     try {
-      const response = await fetch(`http://localhost:5000/download_video/${filename}`, {
+      const response = await fetch(`http://localhost:5000/download_video/${filenameFromUrl}`, {
         method: 'GET',
       });
       if (response.ok) {
@@ -273,7 +321,10 @@ function App() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename;
+
+        // If user hasn't typed a filename, fallback to "final_video"
+        const finalName = fileName || 'final_video';
+        a.download = `${finalName}.mp4`;
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(url);
@@ -305,7 +356,6 @@ function App() {
         alert(data.error);
       } else {
         alert(data.message || 'Previews generated successfully.');
-        // Optionally, fetchVoices() again if you want to refresh the voice list
       }
     } catch (err) {
       console.error('Error generating previews:', err);
@@ -323,7 +373,7 @@ function App() {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             Aragornic AI Video Creator
           </Typography>
-          {/* The user's OpenAI API key */}
+          {/* OpenAI API key input */}
           <TextField
             label="OpenAI API Key"
             variant="outlined"
@@ -401,7 +451,7 @@ function App() {
           </Grid>
         </Box>
 
-        {/* GENERATE SCRIPT */}
+        {/* SCRIPT (Word Count, Duration, Approx. Tokens) */}
         <Box mb={3}>
           <Typography variant="h6" gutterBottom>Script</Typography>
           <TextField
@@ -411,6 +461,18 @@ function App() {
             value={script}
             onChange={(e) => setScript(e.target.value)}
           />
+          <Box mt={2}>
+            <Typography variant="body1">
+              Word Count: <strong>{getWordCount(script)}</strong>
+            </Typography>
+            <Typography variant="body1">
+              Estimated Duration:{' '}
+              <strong>{fullMinutes} min {leftoverSeconds} sec</strong>
+            </Typography>
+            <Typography variant="body1">
+              Approx. Tokens: <strong>{scriptTokens}</strong>
+            </Typography>
+          </Box>
           <Button
             variant="contained"
             onClick={handleGenerateScript}
@@ -469,7 +531,6 @@ function App() {
               onChange={(e) => setElevenLabsApiKey(e.target.value)}
               sx={{ mb: 2 }}
             />
-            {/* Temporary button to generate previews */}
             <Button
               variant="outlined"
               onClick={handleGeneratePreviews}
@@ -495,7 +556,7 @@ function App() {
             <FormControl fullWidth>
               <InputLabel>Voice Model</InputLabel>
               <Select
-                value={ttsModel || ''}  // Prevent controlled/uncontrolled warning
+                value={ttsModel || ''}
                 label="Voice Model"
                 onChange={(e) => {
                   console.log('Voice selection changed to:', e.target.value);
@@ -511,7 +572,6 @@ function App() {
             </FormControl>
           </Box>
 
-          {/* Show static preview if no generated audio yet */}
           {!audioUrl && ttsModel && (
             <Box mb={3}>
               <Typography variant="h6">Preview of Selected Voice</Typography>
@@ -526,7 +586,6 @@ function App() {
             </Box>
           )}
 
-          {/* Once audio is generated, show the generated audio preview */}
           {audioUrl && (
             <Box mb={3}>
               <Typography variant="h6">Preview Audio</Typography>
@@ -582,12 +641,15 @@ function App() {
         {videoUrl && (
           <Box sx={{ mb: 3, textAlign: 'left' }}>
             <Typography variant="h6" gutterBottom>Download Options</Typography>
+
             <TextField
               label="File Name"
               placeholder="Enter file name (without extension)"
+              value={fileName}
               onChange={(e) => setFileName(e.target.value)}
               sx={{ mb: 2, width: '50%' }}
             />
+
             <FormControl sx={{ mb: 2, width: '50%' }}>
               <InputLabel>Screen Size</InputLabel>
               <Select
@@ -599,6 +661,7 @@ function App() {
                 <MenuItem value="1080x1080">Square (1:1)</MenuItem>
               </Select>
             </FormControl>
+
             <Button
               variant="contained"
               startIcon={<PurpleMagicWandIcon />}
