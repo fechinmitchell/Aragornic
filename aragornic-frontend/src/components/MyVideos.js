@@ -1,64 +1,31 @@
-// src/components/MyVideos.js
-
 import React, { useState, useEffect } from 'react';
 import {
-  AppBar,
-  Toolbar,
-  Typography,
-  Box,
-  Grid,
-  Card,
-  CardMedia,
-  CardContent,
-  CardActions,
-  Button,
-  IconButton,
-  Tooltip,
-  CircularProgress,
-  Snackbar,
-  Alert,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem
+  AppBar, Toolbar, Typography, Box, Grid, Card, CardMedia, CardContent,
+  CardActions, Button, IconButton, Tooltip, CircularProgress, Snackbar,
+  Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField,
+  FormControl, InputLabel, Select, MenuItem
 } from '@mui/material';
-import {
-  Delete as DeleteIcon,
-  Schedule as ScheduleIcon,
-  Login as LoginIcon,
-  PhotoCamera
-} from '@mui/icons-material';
-import { FaMagic } from 'react-icons/fa';
+import { Delete as DeleteIcon, Schedule as ScheduleIcon, Login as LoginIcon, PhotoCamera } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { format } from 'date-fns';
 import { getStoredVideos, deleteVideo, updateVideo } from '../utils/localStorage';
 
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+
 function MyVideos() {
-  // Videos and loading state
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
-
-  // Scheduling state
   const [openScheduleDialog, setOpenScheduleDialog] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState(null);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date());
-
-  // TikTok authentication state
   const [tiktokAuthenticated, setTiktokAuthenticated] = useState(false);
   const [tiktokAccessToken, setTiktokAccessToken] = useState('');
-
   const navigate = useNavigate();
 
-  // Fetch videos from local storage
   const fetchVideos = () => {
     setLoading(true);
     try {
@@ -76,13 +43,10 @@ function MyVideos() {
     fetchVideos();
   }, []);
 
-  // Fetch TikTok authentication status
   useEffect(() => {
     const fetchTikTokStatus = async () => {
       try {
-        const response = await fetch('http://localhost:5000/tiktok_status', {
-          credentials: 'include'
-        });
+        const response = await fetch(`${BACKEND_URL}/tiktok_status`, { credentials: 'include' });
         const data = await response.json();
         if (response.ok && data.authenticated) {
           setTiktokAuthenticated(true);
@@ -95,25 +59,20 @@ function MyVideos() {
     fetchTikTokStatus();
   }, []);
 
-  // Handle calendar date change
   const handleDateChange = (date) => {
     setSelectedDate(date);
   };
 
-  // Handle TikTok login
   const handleTikTokLogin = () => {
-    const client_id = 'YOUR_TIKTOK_CLIENT_ID'; // Replace with your TikTok Client ID
-    const redirect_uri = 'http://localhost:5000/tiktok_callback';
+    const client_id = process.env.REACT_APP_TIKTOK_CLIENT_ID || 'YOUR_TIKTOK_CLIENT_ID';
+    const redirect_uri = `${BACKEND_URL}/tiktok_callback`;
     const response_type = 'code';
     const scope = 'video.upload';
-    const state = 'random_state_string'; // Replace with proper state handling in production
-    const authURL = `https://open-api.tiktok.com/platform/oauth/connect/?client_key=${client_id}&redirect_uri=${encodeURIComponent(
-      redirect_uri
-    )}&response_type=${response_type}&scope=${scope}&state=${state}`;
+    const state = 'random_state_string';
+    const authURL = `https://open-api.tiktok.com/platform/oauth/connect/?client_key=${client_id}&redirect_uri=${encodeURIComponent(redirect_uri)}&response_type=${response_type}&scope=${scope}&state=${state}`;
     window.location.href = authURL;
   };
 
-  // Handle deleting a video
   const handleDeleteVideo = (id) => {
     if (window.confirm('Are you sure you want to delete this video?')) {
       deleteVideo(id);
@@ -122,7 +81,6 @@ function MyVideos() {
     }
   };
 
-  // Open schedule dialog for a video
   const handleOpenScheduleDialog = (video) => {
     setSelectedVideo(video);
     setScheduleDateTime('');
@@ -135,7 +93,6 @@ function MyVideos() {
     setScheduleDateTime('');
   };
 
-  // Handle scheduling a video post to TikTok
   const handleScheduleVideo = async () => {
     if (!scheduleDateTime) {
       showSnackbar('Please select a date and time.', 'warning');
@@ -145,7 +102,6 @@ function MyVideos() {
       showSnackbar('Please authenticate with TikTok first.', 'warning');
       return;
     }
-    // Ensure scheduled time is on the selected calendar date
     const selectedDateObj = new Date(selectedDate);
     const scheduledDateObj = new Date(scheduleDateTime);
     if (
@@ -156,7 +112,6 @@ function MyVideos() {
       showSnackbar('Scheduled time must be on the selected date.', 'warning');
       return;
     }
-    // Update the video locally
     const updatedVideos = videos.map((video) => {
       if (video.id === selectedVideo.id) {
         return { ...video, scheduled_post: scheduleDateTime };
@@ -166,9 +121,8 @@ function MyVideos() {
     updateVideo(updatedVideos.find((v) => v.id === selectedVideo.id));
     setVideos(updatedVideos);
     showSnackbar('Video scheduled successfully!', 'success');
-    // Trigger backend scheduling
     try {
-      const response = await fetch('http://localhost:5000/schedule_post', {
+      const response = await fetch(`${BACKEND_URL}/schedule_post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -190,32 +144,26 @@ function MyVideos() {
     handleCloseScheduleDialog();
   };
 
-  // Snackbar helper functions
   const showSnackbar = (message, severity = 'success') => {
     setSnackbar({ open: true, message, severity });
   };
 
   const handleCloseSnackbar = () => {
-    setSnackbar((prev) => ({ ...prev, open: false }));
+    setSnackbar(prev => ({ ...prev, open: false }));
   };
 
   return (
     <>
-      {/* Top AppBar */}
       <AppBar position="static" sx={{ backgroundColor: '#673ab7' }}>
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             Aragornic AI Video Creator
           </Typography>
-          {/* Navigation to Create Video */}
           <Button component={Link} to="/" variant="outlined" color="inherit" sx={{ mr: 2 }}>
             Create Video
           </Button>
-          {/* TikTok Authentication */}
           {tiktokAuthenticated ? (
-            <Typography variant="body1" sx={{ color: 'white' }}>
-              TikTok Connected
-            </Typography>
+            <Typography variant="body1" sx={{ color: 'white' }}>TikTok Connected</Typography>
           ) : (
             <Button variant="outlined" color="inherit" startIcon={<LoginIcon />} onClick={handleTikTokLogin}>
               Connect TikTok
@@ -224,28 +172,19 @@ function MyVideos() {
         </Toolbar>
       </AppBar>
 
-      {/* Main Content */}
       <Box sx={{ p: 4 }}>
-        <Typography variant="h4" gutterBottom>
-          My Videos
-        </Typography>
-
-        {/* Calendar View */}
+        <Typography variant="h4" gutterBottom>My Videos</Typography>
         <Box sx={{ mb: 4 }}>
-          <Typography variant="h6" gutterBottom>
-            Select Date to Schedule Posts
-          </Typography>
+          <Typography variant="h6" gutterBottom>Select Date to Schedule Posts</Typography>
           <Calendar onChange={handleDateChange} value={selectedDate} />
         </Box>
-
-        {/* Video List */}
         {loading ? (
           <CircularProgress />
         ) : videos.length === 0 ? (
           <Typography>No videos found. Create some videos first!</Typography>
         ) : (
           <Grid container spacing={4}>
-            {videos.map((video) => (
+            {videos.map(video => (
               <Grid item xs={12} sm={6} md={4} key={video.id}>
                 <Card>
                   {video.video_url ? (
@@ -255,9 +194,7 @@ function MyVideos() {
                   )}
                   <CardContent>
                     <Typography variant="h6">{video.title}</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Topic: {video.topic}
-                    </Typography>
+                    <Typography variant="body2" color="text.secondary">Topic: {video.topic}</Typography>
                     <Typography variant="body2" color="text.secondary">
                       Created on: {new Date(video.created_at).toLocaleString()}
                     </Typography>
@@ -286,7 +223,6 @@ function MyVideos() {
         )}
       </Box>
 
-      {/* Schedule Dialog */}
       <Dialog open={openScheduleDialog} onClose={handleCloseScheduleDialog}>
         <DialogTitle>Schedule Video Posting to TikTok</DialogTitle>
         <DialogContent>
@@ -302,13 +238,10 @@ function MyVideos() {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseScheduleDialog}>Cancel</Button>
-          <Button onClick={handleScheduleVideo} variant="contained" color="primary">
-            Schedule
-          </Button>
+          <Button onClick={handleScheduleVideo} variant="contained" color="primary">Schedule</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Snackbar Notifications */}
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}

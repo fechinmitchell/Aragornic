@@ -30,3 +30,9 @@ __pycache__/
 *.log
 *.mp4
 # any other large artifacts
+
+.env
+
+/static/
+videos.json
+

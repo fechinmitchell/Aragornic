@@ -20,8 +20,7 @@ from moviepy.editor import (
     VideoFileClip,
     AudioFileClip,
     concatenate_videoclips,
-    ImageClip,
-    CompositeVideoClip
+    ImageClip
 )
 from werkzeug.exceptions import NotFound
 from datetime import datetime
@@ -32,11 +31,15 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Base URL for constructing media links. On production, set BASE_URL in your .env.
+BASE_URL = os.getenv('BASE_URL', 'http://localhost:5000')
+
 # Initialize the Flask app
 app = Flask(__name__, static_folder='static')
 app.secret_key = os.getenv('SECRET_KEY', 'your_secret_key_here')
-# Allow requests from the frontend running on localhost:3000
-CORS(app, supports_credentials=True, resources={r"/*": {"origins": "http://localhost:3000"}})
+
+# Allow requests from the frontend (adjust origins for production)
+CORS(app, supports_credentials=True, resources={r"/*": {"origins": os.getenv("FRONTEND_URL", "http://localhost:3000")}})
 
 # Configure Celery (ensure Redis is running)
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
@@ -45,10 +48,10 @@ celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
 celery.conf.update(app.config)
 
 ###############################################################################
-# Helper Function: Generate Voice Previews
+# Helper Functions
 ###############################################################################
 def generate_voice_previews(elevenlabs_api_key):
-    samples_dir = os.path.join('static', 'samples')
+    samples_dir = os.path.join(app.static_folder, 'samples')
     if not os.path.exists(samples_dir):
         try:
             os.makedirs(samples_dir)
@@ -72,7 +75,6 @@ def generate_voice_previews(elevenlabs_api_key):
 
     voices = voices_data.get('voices', [])
     print(f"Found {len(voices)} voices.")
-
     preview_text = "This is Aragornic AI Video Creator."
 
     for voice in voices:
@@ -83,16 +85,11 @@ def generate_voice_previews(elevenlabs_api_key):
         tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         payload = {'text': preview_text, 'model_id': 'eleven_multilingual_v2'}
         try:
-            tts_response = requests.post(
-                tts_url,
-                headers={**headers, 'Content-Type': 'application/json'},
-                json=payload
-            )
+            tts_response = requests.post(tts_url, headers={**headers, 'Content-Type': 'application/json'}, json=payload)
             tts_response.raise_for_status()
         except requests.exceptions.RequestException as e:
             print(f"Error generating audio for voice {voice_id}: {e}")
             continue
-
         try:
             full_audio = AudioSegment.from_file(io.BytesIO(tts_response.content), format="mp3")
             preview_audio = full_audio[:5000]
@@ -103,8 +100,9 @@ def generate_voice_previews(elevenlabs_api_key):
             print(f"Error processing audio for voice {voice_id}: {e}")
 
 ###############################################################################
-# Temporary Route: Trigger Generation of All Previews
+# Routes
 ###############################################################################
+
 @app.route('/generate_all_previews', methods=['POST'])
 def generate_all_previews():
     data = request.get_json() or {}
@@ -117,16 +115,10 @@ def generate_all_previews():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# Health Check
-###############################################################################
 @app.route('/ping', methods=['GET'])
 def ping():
     return jsonify({"message": "pong"}), 200
 
-###############################################################################
-# 1) Generate Title - GPT
-###############################################################################
 @app.route('/generate_title', methods=['POST'])
 def generate_title():
     data = request.get_json() or {}
@@ -159,9 +151,6 @@ def generate_title():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 2) Generate Script - GPT
-###############################################################################
 @app.route('/generate_script', methods=['POST'])
 def generate_script():
     data = request.get_json() or {}
@@ -171,15 +160,7 @@ def generate_script():
     user_api_key = data.get('user_api_key', '')
     if not user_api_key:
         return jsonify({"error": "No API key provided."}), 400
-    length_mapping = {
-        '1m': 1,
-        '2m': 2,
-        '5m': 5,
-        '10m': 10,
-        '20m': 20,
-        '1h': 60,
-        '2h': 120
-    }
+    length_mapping = {'1m': 1, '2m': 2, '5m': 5, '10m': 10, '20m': 20, '1h': 60, '2h': 120}
     script_duration_minutes = length_mapping.get(length.lower())
     if not script_duration_minutes:
         return jsonify({"error": f"Invalid script length: {length}."}), 400
@@ -208,20 +189,12 @@ def generate_script():
                 max_tokens=tokens
             )
             script_text = resp["choices"][0]["text"].strip()
-        if model == 'gpt-4':
-            cost_per_1k = 0.03
-        elif model == 'gpt-3.5-turbo':
-            cost_per_1k = 0.002
-        else:
-            cost_per_1k = 0.02
+        cost_per_1k = 0.03 if model == 'gpt-4' else 0.002 if model == 'gpt-3.5-turbo' else 0.02
         script_cost = (tokens / 1000) * cost_per_1k
         return jsonify({"script": script_text, "script_cost": round(script_cost, 4)}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 3) Generate Image - DALL·E
-###############################################################################
 @app.route('/generate_image', methods=['POST'])
 def generate_image():
     data = request.get_json() or {}
@@ -232,25 +205,15 @@ def generate_image():
     if not user_api_key:
         return jsonify({"error": "No API key provided."}), 400
     openai.api_key = user_api_key
-    improved_prompt = (
-        f"{user_prompt}. "
-        "Scenic, photorealistic, cinematic lighting, ultra high resolution with absolutely no text, no letters, no words."
-    )
+    improved_prompt = f"{user_prompt}. Scenic, photorealistic, cinematic lighting, ultra high resolution with absolutely no text, no letters, no words."
     try:
-        dalle_resp = openai.Image.create(
-            prompt=improved_prompt,
-            n=num_images,
-            size=image_size
-        )
-        image_urls = [data['url'] for data in dalle_resp['data']]
+        dalle_resp = openai.Image.create(prompt=improved_prompt, n=num_images, size=image_size)
+        image_urls = [item['url'] for item in dalle_resp['data']]
         cost = 0.02 * num_images
         return jsonify({"image_urls": image_urls, "cost": cost}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 4) Upload Media Endpoint
-###############################################################################
 @app.route('/upload_media', methods=['POST'])
 def upload_media():
     if 'files' not in request.files:
@@ -270,18 +233,15 @@ def upload_media():
             if ext not in supported_image_extensions + supported_video_extensions:
                 return jsonify({"error": f"Unsupported file type: {ext}"}), 400
             new_filename = f"{uuid.uuid4().hex}_{filename}"
-            save_path = os.path.join('static', new_filename)
+            save_path = os.path.join(app.static_folder, new_filename)
             try:
                 file.save(save_path)
-                media_url = f"http://localhost:5000/{save_path}"
+                media_url = f"{BASE_URL}/{save_path}"
                 media_urls.append(media_url)
             except Exception as e:
                 return jsonify({"error": f"Could not save file: {str(e)}"}), 500
     return jsonify({"media_urls": media_urls}), 200
 
-###############################################################################
-# 5) List Voices Endpoint
-###############################################################################
 @app.route('/list_voices', methods=['GET'])
 def list_voices():
     elevenlabs_api_key = request.args.get('elevenlabs_api_key')
@@ -297,9 +257,6 @@ def list_voices():
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 6) Generate Audio - ElevenLabs TTS
-###############################################################################
 @app.route('/generate_audio_elevenlabs', methods=['POST'])
 def generate_audio_elevenlabs():
     data = request.get_json() or {}
@@ -312,30 +269,22 @@ def generate_audio_elevenlabs():
         return jsonify({"error": "No script provided."}), 400
     if not voice_id:
         return jsonify({"error": "No voice_id provided."}), 400
-    static_dir = 'static'
+    static_dir = app.static_folder
     if not os.path.exists(static_dir):
         os.makedirs(static_dir)
-    headers = {
-        'xi-api-key': elevenlabs_api_key,
-        'Content-Type': 'application/json'
-    }
+    headers = {'xi-api-key': elevenlabs_api_key, 'Content-Type': 'application/json'}
     payload = {'text': script_text, 'model_id': 'eleven_multilingual_v2'}
-    tts_url = f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}'
+    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     try:
         response = requests.post(tts_url, headers=headers, json=payload)
         response.raise_for_status()
-        local_audio_file = f"{static_dir}/output_audio_{uuid.uuid4().hex}.mp3"
+        local_audio_file = os.path.join(static_dir, f"output_audio_{uuid.uuid4().hex}.mp3")
         with open(local_audio_file, "wb") as f:
             f.write(response.content)
-        return jsonify({
-            "audio_file_url": f"http://localhost:5000/{local_audio_file}"
-        }), 200
+        return jsonify({"audio_file_url": f"{BASE_URL}/{local_audio_file}"}), 200
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 7) Combine Multiple Media + Audio into a Video
-###############################################################################
 @app.route('/create_video', methods=['POST'])
 def create_video():
     data = request.get_json() or {}
@@ -346,30 +295,27 @@ def create_video():
         return jsonify({"error": "Must provide audio_url."}), 400
     if not media_urls:
         return jsonify({"error": "Must provide at least one media URL."}), 400
-    static_dir = 'static'
+    static_dir = app.static_folder
     if not os.path.exists(static_dir):
         os.makedirs(static_dir)
     try:
-        if "http://localhost:5000/" in audio_url:
-            parsed_audio_url = urlparse(audio_url)
-            local_audio_file = parsed_audio_url.path.lstrip('/')
-            if not os.path.exists(local_audio_file):
-                return jsonify({"error": "Audio file does not exist on the server."}), 400
-        else:
-            return jsonify({"error": "Audio must be hosted on the server (local URL)."}), 400
+        # Resolve local audio file path
+        parsed_audio_url = urlparse(audio_url)
+        local_audio_file = parsed_audio_url.path.lstrip('/')
+        if not os.path.exists(local_audio_file):
+            return jsonify({"error": "Audio file does not exist on the server."}), 400
 
         audio_clip = AudioFileClip(local_audio_file)
         audio_duration = audio_clip.duration
 
         local_media_files = []
         for url in media_urls:
-            if "http://localhost:5000/" in url:
-                parsed_url = urlparse(url)
-                local_path = parsed_url.path.lstrip('/')
-                if not os.path.exists(local_path):
-                    return jsonify({"error": f"Media file does not exist: {local_path}"}), 400
+            parsed_url = urlparse(url)
+            local_path = parsed_url.path.lstrip('/')
+            if os.path.exists(local_path):
                 local_media_files.append(local_path)
             else:
+                # Download remote media
                 response = requests.get(url, stream=True)
                 if response.status_code == 200:
                     filename = secure_filename(url.split('/')[-1].split('?')[0])
@@ -389,7 +335,7 @@ def create_video():
         elif split_type == 'custom':
             if not duration_per_media:
                 return jsonify({"error": "Duration per media not provided for custom split."}), 400
-            segment_duration = duration_per_media
+            segment_duration = float(duration_per_media)
             total_required_duration = segment_duration * num_media
             if total_required_duration > audio_duration:
                 return jsonify({"error": f"Total media duration ({total_required_duration}s) exceeds audio duration ({audio_duration}s)."}), 400
@@ -419,33 +365,31 @@ def create_video():
 
         final_clip = concatenate_videoclips(clips, method='compose')
         final_clip = final_clip.set_audio(audio_clip)
-
         final_video_name = f"final_video_{uuid.uuid4().hex}.mp4"
         final_video_path = os.path.join(static_dir, final_video_name)
         final_clip.write_videofile(final_video_path, fps=24, codec="libx264", audio_codec="aac")
 
+        # Close all clips
         audio_clip.close()
         final_clip.close()
         for clip in clips:
-            if isinstance(clip, VideoFileClip):
+            if hasattr(clip, 'close'):
                 clip.close()
 
-        video_url = f"http://localhost:5000/{final_video_path}"
-        download_url = f"http://localhost:5000/download_video/{final_video_name}"
+        video_url = f"{BASE_URL}/{final_video_path}"
+        download_url = f"{BASE_URL}/download_video/{final_video_name}"
         return jsonify({"video_url": video_url, "download_url": download_url}), 200
 
     except Exception as e:
         print(f"Error in /create_video: {e}")
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 8) Download Video Endpoint
-###############################################################################
 @app.route('/download_video/<filename>', methods=['GET'])
 def download_video(filename):
     try:
         static_dir = os.path.join(os.getcwd(), 'static')
-        if not os.path.exists(os.path.join(static_dir, filename)):
+        file_path = os.path.join(static_dir, filename)
+        if not os.path.exists(file_path):
             raise NotFound
         return send_from_directory(static_dir, filename, as_attachment=True)
     except NotFound:
@@ -453,9 +397,6 @@ def download_video(filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-###############################################################################
-# 9) Upload Image Endpoint (Single Image Upload)
-###############################################################################
 @app.route('/upload_image', methods=['POST'])
 def upload_image():
     if 'file' not in request.files:
@@ -463,32 +404,27 @@ def upload_image():
     file = request.files['file']
     if not file:
         return jsonify({"error": "No file selected."}), 400
-    if not os.path.exists('static'):
-        os.makedirs('static')
+    static_dir = app.static_folder
+    if not os.path.exists(static_dir):
+        os.makedirs(static_dir)
     filename = secure_filename(file.filename)
     new_filename = f"{uuid.uuid4().hex}_{filename}"
-    save_path = os.path.join('static', new_filename)
+    save_path = os.path.join(static_dir, new_filename)
     try:
         file.save(save_path)
     except Exception as e:
         return jsonify({"error": f"Could not save file: {str(e)}"}), 500
-    return jsonify({
-        "image_url": f"http://localhost:5000/{save_path}"
-    }), 200
+    return jsonify({"image_url": f"{BASE_URL}/{save_path}"}), 200
 
-###############################################################################
-# 10) Handle TikTok OAuth Callback
-###############################################################################
 @app.route('/tiktok_callback', methods=['GET'])
 def tiktok_callback():
     code = request.args.get('code')
     state = request.args.get('state')
     if not code:
         return jsonify({"error": "No code provided in callback."}), 400
-    # (State validation should be done in production)
     client_id = os.getenv('TIKTOK_CLIENT_ID', 'YOUR_TIKTOK_CLIENT_ID')
     client_secret = os.getenv('TIKTOK_CLIENT_SECRET', 'YOUR_TIKTOK_CLIENT_SECRET')
-    redirect_uri = 'http://localhost:5000/tiktok_callback'
+    redirect_uri = f"{BASE_URL}/tiktok_callback"
     token_url = 'https://open-api.tiktok.com/oauth/access_token/'
     payload = {
         'client_key': client_id,
@@ -508,13 +444,10 @@ def tiktok_callback():
         user_id = data['data']['user_id']
         session['tiktok_access_token'] = access_token
         session['tiktok_user_id'] = user_id
-        return redirect('http://localhost:3000/my-videos')
+        return redirect(os.getenv('FRONTEND_URL', 'http://localhost:3000') + "/my-videos")
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 11) Check TikTok Authentication Status
-###############################################################################
 @app.route('/tiktok_status', methods=['GET'])
 def tiktok_status():
     access_token = session.get('tiktok_access_token')
@@ -524,9 +457,6 @@ def tiktok_status():
     else:
         return jsonify({"authenticated": False}), 200
 
-###############################################################################
-# 12) Schedule Post Endpoint
-###############################################################################
 @app.route('/schedule_post', methods=['POST'])
 def schedule_post():
     data = request.get_json() or {}
@@ -548,9 +478,6 @@ def schedule_post():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-###############################################################################
-# 13) Celery Task: Post Video to TikTok
-###############################################################################
 @celery.task
 def post_video_to_tiktok(video_id, tiktok_access_token):
     videos = getStoredVideos()
@@ -573,15 +500,9 @@ def post_video_to_tiktok(video_id, tiktok_access_token):
     with open(temp_video_path, 'wb') as f:
         f.write(video_content)
     upload_url = 'https://open-api.tiktok.com/share/video/upload/'
-    headers = {
-        'Authorization': f'Bearer {tiktok_access_token}'
-    }
-    files = {
-        'video': open(temp_video_path, 'rb')
-    }
-    data = {
-        'description': 'Scheduled video from Aragornic AI Video Creator.'
-    }
+    headers = {'Authorization': f'Bearer {tiktok_access_token}'}
+    files = {'video': open(temp_video_path, 'rb')}
+    data = {'description': 'Scheduled video from Aragornic AI Video Creator.'}
     try:
         upload_resp = requests.post(upload_url, headers=headers, files=files, data=data)
         upload_resp.raise_for_status()
@@ -598,7 +519,7 @@ def post_video_to_tiktok(video_id, tiktok_access_token):
             os.remove(temp_video_path)
 
 ###############################################################################
-# Utility: Get Stored Videos from Local Storage
+# Utility Functions: Local Storage for Videos
 ###############################################################################
 def getStoredVideos():
     if os.path.exists('videos.json'):
@@ -631,6 +552,6 @@ def deleteVideo(video_id):
 # Run the Flask app
 ###############################################################################
 if __name__ == '__main__':
-    if not os.path.exists('static'):
-        os.makedirs('static')
+    if not os.path.exists(app.static_folder):
+        os.makedirs(app.static_folder)
     app.run(debug=True, port=5000)
