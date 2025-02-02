@@ -161,9 +161,6 @@ function MyVideos() {
             </Button>
           )}
         </Toolbar>
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>My Videos</Typography>
-        </Toolbar>
       </AppBar>
 
       <Box sx={{ p: 4 }}>

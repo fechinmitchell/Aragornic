@@ -1,3 +1,5 @@
+// src/components/CreateVideo.js
+
 import React, { useState, useEffect } from 'react';
 import {
   AppBar,
@@ -41,17 +43,26 @@ import {
 } from '../utils/localStorage';
 
 // Use the API URL from environment variables (REACT_APP_API_URL)
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+// For example, in your .env file: REACT_APP_API_URL=https://aragornic.onrender.com
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 function CreateVideo() {
   // Utility functions
-  const getWordCount = (text) => text.trim().split(/\s+/).filter(Boolean).length;
+  const getWordCount = (text) =>
+    text.trim().split(/\s+/).filter(Boolean).length;
+
   const estimateScriptDuration = (text, wpm = 150) => {
     const words = getWordCount(text);
     const totalMinutes = words / wpm;
-    return { fullMinutes: Math.floor(totalMinutes), leftoverSeconds: Math.round((totalMinutes - Math.floor(totalMinutes)) * 60) };
+    return {
+      fullMinutes: Math.floor(totalMinutes),
+      leftoverSeconds: Math.round((totalMinutes - Math.floor(totalMinutes)) * 60),
+    };
   };
-  const approximateTokens = (text) => Math.round(getWordCount(text) / 0.75);
+
+  // Approximate tokens (assuming ~1 token per 0.75 words)
+  const approximateTokens = (text) =>
+    Math.round(getWordCount(text) / 0.75);
 
   // State variables
   const [openAiKey, setOpenAiKey] = useState('');
@@ -62,7 +73,7 @@ function CreateVideo() {
   const [script, setScript] = useState('');
   const [imageSize, setImageSize] = useState('512x512');
   const [ttsModel, setTtsModel] = useState('');
-  const [audioUrl, setAudioUrl] = useState(''); // Use camelCase throughout
+  const [audioUrl, setAudioUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
   const [availableVoices, setAvailableVoices] = useState([]);
@@ -75,19 +86,26 @@ function CreateVideo() {
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
 
-  // Media files and other state
+  // Other state: media files, segmentation, file name, cost, snackbar
   const [mediaFiles, setMediaFiles] = useState([]);
-  const [splitType, setSplitType] = useState('equal');
+  const [splitType, setSplitType] = useState('equal'); // 'equal' or 'custom'
   const [durationPerMedia, setDurationPerMedia] = useState('');
   const [fileName, setFileName] = useState('');
   const [screenSize, setScreenSize] = useState('1920x1080');
   const [cost, setCost] = useState(0);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success', // 'success', 'error', 'warning', 'info'
+  });
+
+  // Initialize navigation hook
   const navigate = useNavigate();
 
   const { fullMinutes, leftoverSeconds } = estimateScriptDuration(script);
   const scriptTokens = approximateTokens(script);
 
+  // Auto-set file name when video title and video URL are available
   useEffect(() => {
     if (videoUrl && videoTitle && !fileName) {
       const sanitized = videoTitle.replace(/[^a-zA-Z0-9_\-]+/g, '_');
@@ -95,10 +113,13 @@ function CreateVideo() {
     }
   }, [videoUrl, videoTitle, fileName]);
 
-  // Handler functions
-  const showSnackbar = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
-  const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
+  // Snackbar helper functions
+  const showSnackbar = (message, severity = 'success') =>
+    setSnackbar({ open: true, message, severity });
+  const handleCloseSnackbar = () =>
+    setSnackbar((prev) => ({ ...prev, open: false }));
 
+  // Handler to generate video title
   const handleGenerateTitle = async () => {
     if (!openAiKey || !topic.trim()) {
       showSnackbar('Please enter your OpenAI API key and topic.', 'warning');
@@ -112,9 +133,12 @@ function CreateVideo() {
         body: JSON.stringify({ topic, model, user_api_key: openAiKey }),
       });
       const data = await res.json();
-      if (data.error) return showSnackbar(data.error, 'error');
+      if (data.error) {
+        showSnackbar(data.error, 'error');
+        return;
+      }
       setVideoTitle(data.title || '');
-      if (data.cost) setCost(prev => prev + data.cost);
+      if (data.cost) setCost((prev) => prev + data.cost);
       showSnackbar('Title generated successfully!', 'success');
     } catch (err) {
       console.error(err);
@@ -124,6 +148,7 @@ function CreateVideo() {
     }
   };
 
+  // Handler to generate script
   const handleGenerateScript = async () => {
     if (!openAiKey || !topic.trim()) {
       showSnackbar('Please enter your OpenAI API key and topic.', 'warning');
@@ -134,12 +159,20 @@ function CreateVideo() {
       const res = await fetch(`${API_URL}/generate_script`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, model, length: scriptLength, user_api_key: openAiKey }),
+        body: JSON.stringify({
+          topic,
+          model,
+          length: scriptLength,
+          user_api_key: openAiKey,
+        }),
       });
       const data = await res.json();
-      if (data.error) return showSnackbar(data.error, 'error');
+      if (data.error) {
+        showSnackbar(data.error, 'error');
+        return;
+      }
       setScript(data.script || '');
-      if (data.script_cost) setCost(prev => prev + data.script_cost);
+      if (data.script_cost) setCost((prev) => prev + data.script_cost);
       showSnackbar('Script generated successfully!', 'success');
     } catch (err) {
       console.error(err);
@@ -149,6 +182,7 @@ function CreateVideo() {
     }
   };
 
+  // Handler to generate images
   const handleGenerateImages = async () => {
     if (!openAiKey || !topic.trim()) {
       showSnackbar('Please enter your OpenAI API key and topic.', 'warning');
@@ -160,12 +194,20 @@ function CreateVideo() {
       const res = await fetch(`${API_URL}/generate_image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, image_size: imageSize, num_images: 3, user_api_key: openAiKey }),
+        body: JSON.stringify({
+          prompt,
+          image_size: imageSize,
+          num_images: 3,
+          user_api_key: openAiKey,
+        }),
       });
       const data = await res.json();
-      if (data.error) return showSnackbar(data.error, 'error');
-      setMediaFiles(prev => [...prev, ...data.image_urls]);
-      if (data.cost) setCost(prev => prev + data.cost);
+      if (data.error) {
+        showSnackbar(data.error, 'error');
+        return;
+      }
+      setMediaFiles((prev) => [...prev, ...data.image_urls]);
+      if (data.cost) setCost((prev) => prev + data.cost);
       showSnackbar('Images generated successfully!', 'success');
     } catch (err) {
       console.error(err);
@@ -175,6 +217,7 @@ function CreateVideo() {
     }
   };
 
+  // Handler to generate audio
   const handleGenerateAudio = async () => {
     if (!elevenLabsApiKey || !script.trim() || !ttsModel) {
       showSnackbar('Please enter your Eleven Labs API key, script, and select a voice.', 'warning');
@@ -185,10 +228,17 @@ function CreateVideo() {
       const res = await fetch(`${API_URL}/generate_audio_elevenlabs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ script, voice_id: ttsModel, elevenlabs_api_key: elevenLabsApiKey }),
+        body: JSON.stringify({
+          script,
+          voice_id: ttsModel,
+          elevenlabs_api_key: elevenLabsApiKey,
+        }),
       });
       const data = await res.json();
-      if (data.error) return showSnackbar(data.error, 'error');
+      if (data.error) {
+        showSnackbar(data.error, 'error');
+        return;
+      }
       setAudioUrl(data.audio_file_url || '');
       showSnackbar('Audio generated successfully!', 'success');
     } catch (err) {
@@ -199,6 +249,7 @@ function CreateVideo() {
     }
   };
 
+  // Handler to upload media files
   const handleMediaUpload = async (event) => {
     const files = event.target.files;
     if (!files.length) return;
@@ -213,8 +264,11 @@ function CreateVideo() {
         body: formData,
       });
       const data = await res.json();
-      if (data.error) return showSnackbar(data.error, 'error');
-      setMediaFiles(prev => [...prev, ...data.media_urls]);
+      if (data.error) {
+        showSnackbar(data.error, 'error');
+        return;
+      }
+      setMediaFiles((prev) => [...prev, ...data.media_urls]);
       showSnackbar('Media uploaded successfully!', 'success');
     } catch (err) {
       console.error(err);
@@ -224,11 +278,13 @@ function CreateVideo() {
     }
   };
 
+  // Handler to remove a media file
   const handleRemoveMedia = (index) => {
-    setMediaFiles(prev => prev.filter((_, i) => i !== index));
+    setMediaFiles((prev) => prev.filter((_, i) => i !== index));
     showSnackbar('Media removed.', 'info');
   };
 
+  // Handler to create final video
   const handleCreateVideo = async () => {
     if (!audioUrl || mediaFiles.length === 0) {
       showSnackbar('Need an audio file and at least one media file.', 'warning');
@@ -256,16 +312,21 @@ function CreateVideo() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          audio_url,
+          audio_url: audioUrl,
           media_urls: mediaFiles,
           media_split_config,
           user_api_key: openAiKey,
         }),
       });
       const data = await res.json();
-      if (data.error) return showSnackbar(data.error, 'error');
+      if (data.error) {
+        showSnackbar(data.error, 'error');
+        return;
+      }
       setVideoUrl(data.video_url || '');
       showSnackbar('Video created successfully!', 'success');
+
+      // Store the video locally
       const newVideo = {
         id: uuidv4(),
         title: videoTitle,
@@ -287,6 +348,7 @@ function CreateVideo() {
     }
   };
 
+  // Handler to download the final video
   const handleDownload = async () => {
     if (!videoUrl) {
       showSnackbar('No video URL to download.', 'warning');
@@ -294,7 +356,9 @@ function CreateVideo() {
     }
     const filenameFromUrl = videoUrl.split('/').pop();
     try {
-      const response = await fetch(`${API_URL}/download_video/${filenameFromUrl}`, { method: 'GET' });
+      const response = await fetch(`${API_URL}/download_video/${filenameFromUrl}`, {
+        method: 'GET',
+      });
       if (response.ok) {
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
@@ -316,6 +380,7 @@ function CreateVideo() {
     }
   };
 
+  // Handler to generate previews
   const handleGeneratePreviews = async () => {
     if (!elevenLabsApiKey) {
       showSnackbar('Please enter your Eleven Labs API key.', 'warning');
@@ -346,7 +411,12 @@ function CreateVideo() {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             Aragornic AI Video Creator
           </Typography>
-          <Button variant="outlined" color="inherit" sx={{ mr: 2 }} onClick={() => navigate('/my-videos')}>
+          <Button
+            variant="outlined"
+            color="inherit"
+            sx={{ mr: 2 }}
+            onClick={() => navigate('/my-videos')}
+          >
             My Videos
           </Button>
           <TextField
@@ -362,18 +432,36 @@ function CreateVideo() {
       </AppBar>
       <Container sx={{ mt: 4, mb: 4 }}>
         <Box mb={3}>
-          <Typography variant="h5" gutterBottom>Topic</Typography>
-          <TextField fullWidth placeholder="E.g. Ancient Rome, World War II..." value={topic} onChange={(e) => setTopic(e.target.value)} />
+          <Typography variant="h5" gutterBottom>
+            Topic
+          </Typography>
+          <TextField
+            fullWidth
+            placeholder="E.g. Ancient Rome, World War II..."
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+          />
         </Box>
         <Box mb={3}>
-          <Typography variant="h6" gutterBottom>Video Title</Typography>
+          <Typography variant="h6" gutterBottom>
+            Video Title
+          </Typography>
           <Box display="flex" gap={2}>
-            <TextField fullWidth placeholder="Generate or type in a title" value={videoTitle} onChange={(e) => setVideoTitle(e.target.value)} />
+            <TextField
+              fullWidth
+              placeholder="Generate or type in a title"
+              value={videoTitle}
+              onChange={(e) => setVideoTitle(e.target.value)}
+            />
             <Button
               onClick={handleGenerateTitle}
               disabled={loadingTitle}
               startIcon={loadingTitle ? <CircularProgress size={20} /> : <FaMagic />}
-              sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}
+              sx={{
+                backgroundColor: '#9c27b0',
+                color: 'white',
+                '&:hover': { backgroundColor: '#7b1fa2' },
+              }}
             >
               {loadingTitle ? 'Generating Title...' : 'Generate Title'}
             </Button>
@@ -384,7 +472,11 @@ function CreateVideo() {
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
                 <InputLabel>Model</InputLabel>
-                <Select value={model} label="Model" onChange={(e) => setModel(e.target.value)}>
+                <Select
+                  value={model}
+                  label="Model"
+                  onChange={(e) => setModel(e.target.value)}
+                >
                   <MenuItem value="gpt-3.5-turbo">GPT-3.5 Turbo</MenuItem>
                   <MenuItem value="gpt-4">GPT-4</MenuItem>
                   <MenuItem value="text-davinci-003">Davinci</MenuItem>
@@ -394,7 +486,11 @@ function CreateVideo() {
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
                 <InputLabel>Script Length</InputLabel>
-                <Select value={scriptLength} label="Script Length" onChange={(e) => setScriptLength(e.target.value)}>
+                <Select
+                  value={scriptLength}
+                  label="Script Length"
+                  onChange={(e) => setScriptLength(e.target.value)}
+                >
                   <MenuItem value="1m">1 Minute</MenuItem>
                   <MenuItem value="2m">2 Minutes</MenuItem>
                   <MenuItem value="5m">5 Minutes</MenuItem>
@@ -408,28 +504,53 @@ function CreateVideo() {
           </Grid>
         </Box>
         <Box mb={3}>
-          <Typography variant="h6" gutterBottom>Script</Typography>
-          <TextField fullWidth multiline rows={8} value={script} onChange={(e) => setScript(e.target.value)} />
+          <Typography variant="h6" gutterBottom>
+            Script
+          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={8}
+            value={script}
+            onChange={(e) => setScript(e.target.value)}
+          />
           <Box mt={2}>
-            <Typography variant="body1">Word Count: <strong>{getWordCount(script)}</strong></Typography>
-            <Typography variant="body1">Estimated Duration: <strong>{fullMinutes} min {leftoverSeconds} sec</strong></Typography>
-            <Typography variant="body1">Approx. Tokens: <strong>{scriptTokens}</strong></Typography>
+            <Typography variant="body1">
+              Word Count: <strong>{getWordCount(script)}</strong>
+            </Typography>
+            <Typography variant="body1">
+              Estimated Duration: <strong>{fullMinutes} min {leftoverSeconds} sec</strong>
+            </Typography>
+            <Typography variant="body1">
+              Approx. Tokens: <strong>{scriptTokens}</strong>
+            </Typography>
           </Box>
           <Button
             variant="contained"
             onClick={handleGenerateScript}
             disabled={loadingScript}
             startIcon={loadingScript ? <CircularProgress size={20} /> : <FaMagic />}
-            sx={{ mt: 2, backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}
+            sx={{
+              mt: 2,
+              backgroundColor: '#9c27b0',
+              color: 'white',
+              '&:hover': { backgroundColor: '#7b1fa2' },
+            }}
           >
             {loadingScript ? 'Generating Script...' : 'Generate Script'}
           </Button>
         </Box>
         <Box mb={3}>
-          <Typography variant="h6" gutterBottom>Generate Images (DALL·E)</Typography>
+          <Typography variant="h6" gutterBottom>
+            Generate Images (DALL·E)
+          </Typography>
           <FormControl fullWidth sx={{ mb: 2 }}>
             <InputLabel>Image Size</InputLabel>
-            <Select value={imageSize} label="Image Size" onChange={(e) => setImageSize(e.target.value)}>
+            <Select
+              value={imageSize}
+              label="Image Size"
+              onChange={(e) => setImageSize(e.target.value)}
+            >
               <MenuItem value="256x256">256x256</MenuItem>
               <MenuItem value="512x512">512x512</MenuItem>
               <MenuItem value="1024x1024">1024x1024</MenuItem>
@@ -440,39 +561,70 @@ function CreateVideo() {
             onClick={handleGenerateImages}
             disabled={loadingImage}
             startIcon={loadingImage ? <CircularProgress size={20} /> : <FaMagic />}
-            sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}
+            sx={{
+              backgroundColor: '#9c27b0',
+              color: 'white',
+              '&:hover': { backgroundColor: '#7b1fa2' },
+            }}
           >
             {loadingImage ? 'Generating Images...' : 'Generate Images'}
           </Button>
-          {mediaFiles.filter(url => {
+          {mediaFiles.filter((url) => {
             const ext = url.split('.').pop().toLowerCase().split(/\#|\?/)[0];
             return ['png', 'jpg', 'jpeg', 'gif'].includes(ext);
           }).length > 0 && (
             <Box mt={2}>
               <Typography variant="subtitle1">Generated Images:</Typography>
               <Grid container spacing={2}>
-                {mediaFiles.filter(url => {
-                  const ext = url.split('.').pop().toLowerCase().split(/\#|\?/)[0];
-                  return ['png', 'jpg', 'jpeg', 'gif'].includes(ext);
-                }).map((url, index) => (
-                  <Grid item key={index}>
-                    <Card sx={{ width: 200, height: 120, position: 'relative' }}>
-                      <CardMedia component="img" image={url} alt={`Generated ${index + 1}`} sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      <Tooltip title="Remove">
-                        <IconButton onClick={() => handleRemoveMedia(mediaFiles.indexOf(url))} sx={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(255,255,255,0.7)' }}>
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Card>
-                  </Grid>
-                ))}
+                {mediaFiles
+                  .filter((url) => {
+                    const ext = url.split('.').pop().toLowerCase().split(/\#|\?/)[0];
+                    return ['png', 'jpg', 'jpeg', 'gif'].includes(ext);
+                  })
+                  .map((url, index) => (
+                    <Grid item key={index}>
+                      <Card sx={{ width: 200, height: 120, position: 'relative' }}>
+                        <CardMedia
+                          component="img"
+                          image={url}
+                          alt={`Generated ${index + 1}`}
+                          sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                        <Tooltip title="Remove">
+                          <IconButton
+                            onClick={() => handleRemoveMedia(mediaFiles.indexOf(url))}
+                            sx={{
+                              position: 'absolute',
+                              top: 5,
+                              right: 5,
+                              backgroundColor: 'rgba(255,255,255,0.7)',
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Card>
+                    </Grid>
+                  ))}
               </Grid>
             </Box>
           )}
         </Box>
         <Box mb={3}>
-          <Typography variant="h6" gutterBottom>Upload Images and Videos</Typography>
-          <Button variant="contained" component="label" disabled={uploadingMedia} startIcon={<UploadIcon />} sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}>
+          <Typography variant="h6" gutterBottom>
+            Upload Images and Videos
+          </Typography>
+          <Button
+            variant="contained"
+            component="label"
+            disabled={uploadingMedia}
+            startIcon={<UploadIcon />}
+            sx={{
+              backgroundColor: '#9c27b0',
+              color: 'white',
+              '&:hover': { backgroundColor: '#7b1fa2' },
+            }}
+          >
             {uploadingMedia ? 'Uploading...' : 'Upload Media'}
             <input type="file" hidden multiple accept="image/*,video/*" onChange={handleMediaUpload} />
           </Button>
@@ -489,15 +641,33 @@ function CreateVideo() {
                       <Box position="relative">
                         {isImage ? (
                           <Card sx={{ width: 200, height: 120 }}>
-                            <CardMedia component="img" image={url} alt={`Uploaded ${index + 1}`} sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <CardMedia
+                              component="img"
+                              image={url}
+                              alt={`Uploaded ${index + 1}`}
+                              sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
                           </Card>
                         ) : isVideo ? (
                           <Card sx={{ width: 200, height: 120 }}>
-                            <CardMedia component="video" src={url} controls sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <CardMedia
+                              component="video"
+                              src={url}
+                              controls
+                              sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
                           </Card>
                         ) : null}
                         <Tooltip title="Remove">
-                          <IconButton onClick={() => handleRemoveMedia(index)} sx={{ position: 'absolute', top: 5, right: 5, backgroundColor: 'rgba(255,255,255,0.7)' }}>
+                          <IconButton
+                            onClick={() => handleRemoveMedia(index)}
+                            sx={{
+                              position: 'absolute',
+                              top: 5,
+                              right: 5,
+                              backgroundColor: 'rgba(255,255,255,0.7)',
+                            }}
+                          >
                             <DeleteIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -510,73 +680,163 @@ function CreateVideo() {
           )}
         </Box>
         <Box mb={3}>
-          <Typography variant="h6" gutterBottom>Eleven Labs API Key</Typography>
-          <TextField fullWidth placeholder="Enter your Eleven Labs API Key" value={elevenLabsApiKey} onChange={(e) => setElevenLabsApiKey(e.target.value)} sx={{ mb: 2 }} type="password" />
-          <Button variant="outlined" onClick={handleGeneratePreviews} sx={{ mb: 2 }} disabled={!elevenLabsApiKey}>
+          <Typography variant="h6" gutterBottom>
+            Eleven Labs API Key
+          </Typography>
+          <TextField
+            fullWidth
+            placeholder="Enter your Eleven Labs API Key"
+            value={elevenLabsApiKey}
+            onChange={(e) => setElevenLabsApiKey(e.target.value)}
+            sx={{ mb: 2 }}
+            type="password"
+          />
+          <Button
+            variant="outlined"
+            onClick={handleGeneratePreviews}
+            sx={{ mb: 2 }}
+            disabled={!elevenLabsApiKey}
+          >
             Generate Previews
           </Button>
-          <Typography variant="h6" gutterBottom>Script</Typography>
-          <TextField fullWidth multiline rows={8} placeholder="Enter your script here..." value={script} onChange={(e) => setScript(e.target.value)} />
+          <Typography variant="h6" gutterBottom>
+            Script
+          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={8}
+            placeholder="Enter your script here..."
+            value={script}
+            onChange={(e) => setScript(e.target.value)}
+          />
         </Box>
         <Box mb={3}>
           <FormControl fullWidth>
             <InputLabel>Voice Model</InputLabel>
-            <Select value={ttsModel || ''} label="Voice Model" onChange={(e) => setTtsModel(e.target.value)}>
-              {availableVoices.map(voice => (
-                <MenuItem key={voice.voice_id} value={voice.voice_id}>{voice.name || voice.voice_id}</MenuItem>
+            <Select
+              value={ttsModel || ''}
+              label="Voice Model"
+              onChange={(e) => setTtsModel(e.target.value)}
+            >
+              {availableVoices.map((voice) => (
+                <MenuItem key={voice.voice_id} value={voice.voice_id}>
+                  {voice.name || voice.voice_id}
+                </MenuItem>
               ))}
             </Select>
           </FormControl>
         </Box>
         {!audioUrl && ttsModel && (
           <Box mb={3}>
-            <Typography variant="h6" gutterBottom>Preview of Selected Voice</Typography>
-            <audio key={ttsModel} controls src={`/static/samples/${ttsModel}.mp3`} style={{ width: '100%' }}>
+            <Typography variant="h6" gutterBottom>
+              Preview of Selected Voice
+            </Typography>
+            <audio
+              key={ttsModel}
+              controls
+              src={`/static/samples/${ttsModel}.mp3`}
+              style={{ width: '100%' }}
+            >
               Your browser does not support the audio element.
             </audio>
           </Box>
         )}
         {audioUrl && (
           <Box mb={3}>
-            <Typography variant="h6" gutterBottom>Preview Audio</Typography>
-            <audio key={audioUrl} controls src={audioUrl} style={{ width: '100%' }}>
+            <Typography variant="h6" gutterBottom>
+              Preview Audio
+            </Typography>
+            <audio
+              key={audioUrl}
+              controls
+              src={audioUrl}
+              style={{ width: '100%' }}
+            >
               Your browser does not support the audio element.
             </audio>
           </Box>
         )}
         <Box mb={3} textAlign="center">
-          <Button variant="contained" onClick={handleGenerateAudio} disabled={loadingAudio} startIcon={loadingAudio ? <CircularProgress size={20} /> : <PhotoCamera />} sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}>
+          <Button
+            variant="contained"
+            onClick={handleGenerateAudio}
+            disabled={loadingAudio}
+            startIcon={loadingAudio ? <CircularProgress size={20} /> : <PhotoCamera />}
+            sx={{
+              backgroundColor: '#9c27b0',
+              color: 'white',
+              '&:hover': { backgroundColor: '#7b1fa2' },
+            }}
+          >
             {loadingAudio ? 'Generating Audio...' : 'Generate Audio'}
           </Button>
         </Box>
         <Box mb={3}>
-          <Typography variant="h6" gutterBottom>Compile Final Video</Typography>
+          <Typography variant="h6" gutterBottom>
+            Compile Final Video
+          </Typography>
           <Box mb={2}>
             <FormControl component="fieldset">
-              <Typography variant="subtitle1" gutterBottom>Segmentation Type</Typography>
+              <Typography variant="subtitle1" gutterBottom>
+                Segmentation Type
+              </Typography>
               <RadioGroup row value={splitType} onChange={(e) => setSplitType(e.target.value)}>
                 <FormControlLabel value="equal" control={<Radio />} label="Equal Segments" />
                 <FormControlLabel value="custom" control={<Radio />} label="Custom Duration" />
               </RadioGroup>
             </FormControl>
             {splitType === 'custom' && (
-              <TextField label="Duration per Media (seconds)" type="number" value={durationPerMedia} onChange={(e) => setDurationPerMedia(e.target.value)} InputProps={{ endAdornment: <InputAdornment position="end">s</InputAdornment> }} sx={{ mt: 1, width: '50%' }} fullWidth />
+              <TextField
+                label="Duration per Media (seconds)"
+                type="number"
+                value={durationPerMedia}
+                onChange={(e) => setDurationPerMedia(e.target.value)}
+                InputProps={{
+                  endAdornment: <InputAdornment position="end">s</InputAdornment>,
+                }}
+                sx={{ mt: 1, width: '50%' }}
+                fullWidth
+              />
             )}
           </Box>
-          <Button variant="contained" onClick={handleCreateVideo} disabled={loadingVideo} startIcon={loadingVideo ? <CircularProgress size={20} /> : <PhotoCamera />} sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' }, mb: 2 }}>
+          <Button
+            variant="contained"
+            onClick={handleCreateVideo}
+            disabled={loadingVideo}
+            startIcon={loadingVideo ? <CircularProgress size={20} /> : <PhotoCamera />}
+            sx={{
+              backgroundColor: '#9c27b0',
+              color: 'white',
+              '&:hover': { backgroundColor: '#7b1fa2' },
+              mb: 2,
+            }}
+          >
             {loadingVideo ? 'Creating Video...' : 'Create Video'}
           </Button>
           {videoUrl && (
             <Box sx={{ mt: 2 }}>
               <Typography>Final Video:</Typography>
-              <video controls src={videoUrl} style={{ width: '100%', maxWidth: '600px', borderRadius: '8px' }} />
+              <video
+                controls
+                src={videoUrl}
+                style={{ width: '100%', maxWidth: '600px', borderRadius: '8px' }}
+              />
             </Box>
           )}
         </Box>
         {videoUrl && (
           <Box sx={{ mb: 3, textAlign: 'left' }}>
-            <Typography variant="h6" gutterBottom>Download Options</Typography>
-            <TextField label="File Name" placeholder="Enter file name (without extension)" value={fileName} onChange={(e) => setFileName(e.target.value)} sx={{ mb: 2, width: '50%' }} />
+            <Typography variant="h6" gutterBottom>
+              Download Options
+            </Typography>
+            <TextField
+              label="File Name"
+              placeholder="Enter file name (without extension)"
+              value={fileName}
+              onChange={(e) => setFileName(e.target.value)}
+              sx={{ mb: 2, width: '50%' }}
+            />
             <FormControl sx={{ mb: 2, width: '50%' }}>
               <InputLabel>Screen Size</InputLabel>
               <Select value={screenSize} onChange={(e) => setScreenSize(e.target.value)}>
@@ -585,7 +845,16 @@ function CreateVideo() {
                 <MenuItem value="1080x1080">Square (1:1)</MenuItem>
               </Select>
             </FormControl>
-            <Button variant="contained" startIcon={<PhotoCamera />} onClick={handleDownload} sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}>
+            <Button
+              variant="contained"
+              startIcon={<PhotoCamera />}
+              sx={{
+                backgroundColor: '#9c27b0',
+                color: 'white',
+                '&:hover': { backgroundColor: '#7b1fa2' },
+              }}
+              onClick={handleDownload}
+            >
               Download Video
             </Button>
           </Box>
@@ -594,7 +863,12 @@ function CreateVideo() {
           <Typography variant="h6">Total Cost: ${cost.toFixed(2)}</Typography>
         </Box>
       </Container>
-      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
         <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
           {snackbar.message}
         </Alert>
