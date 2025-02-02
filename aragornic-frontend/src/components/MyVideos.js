@@ -12,7 +12,8 @@ import 'react-calendar/dist/Calendar.css';
 import { format } from 'date-fns';
 import { getStoredVideos, deleteVideo, updateVideo } from '../utils/localStorage';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+// Use the API URL from environment variables (if needed)
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 function MyVideos() {
   const [videos, setVideos] = useState([]);
@@ -32,7 +33,7 @@ function MyVideos() {
       const storedVideos = getStoredVideos();
       setVideos(storedVideos);
     } catch (err) {
-      console.error('Error fetching videos:', err);
+      console.error(err);
       showSnackbar('Error fetching videos.', 'error');
     } finally {
       setLoading(false);
@@ -46,26 +47,24 @@ function MyVideos() {
   useEffect(() => {
     const fetchTikTokStatus = async () => {
       try {
-        const response = await fetch(`${BACKEND_URL}/tiktok_status`, { credentials: 'include' });
+        const response = await fetch(`${API_URL}/tiktok_status`, { credentials: 'include' });
         const data = await response.json();
         if (response.ok && data.authenticated) {
           setTiktokAuthenticated(true);
           setTiktokAccessToken(data.access_token);
         }
       } catch (error) {
-        console.error('Error fetching TikTok status:', error);
+        console.error(error);
       }
     };
     fetchTikTokStatus();
   }, []);
 
-  const handleDateChange = (date) => {
-    setSelectedDate(date);
-  };
+  const handleDateChange = (date) => setSelectedDate(date);
 
   const handleTikTokLogin = () => {
     const client_id = process.env.REACT_APP_TIKTOK_CLIENT_ID || 'YOUR_TIKTOK_CLIENT_ID';
-    const redirect_uri = `${BACKEND_URL}/tiktok_callback`;
+    const redirect_uri = `${API_URL}/tiktok_callback`;
     const response_type = 'code';
     const scope = 'video.upload';
     const state = 'random_state_string';
@@ -112,17 +111,14 @@ function MyVideos() {
       showSnackbar('Scheduled time must be on the selected date.', 'warning');
       return;
     }
-    const updatedVideos = videos.map((video) => {
-      if (video.id === selectedVideo.id) {
-        return { ...video, scheduled_post: scheduleDateTime };
-      }
-      return video;
-    });
-    updateVideo(updatedVideos.find((v) => v.id === selectedVideo.id));
+    const updatedVideos = videos.map(video =>
+      video.id === selectedVideo.id ? { ...video, scheduled_post: scheduleDateTime } : video
+    );
+    updateVideo(updatedVideos.find(v => v.id === selectedVideo.id));
     setVideos(updatedVideos);
     showSnackbar('Video scheduled successfully!', 'success');
     try {
-      const response = await fetch(`${BACKEND_URL}/schedule_post`, {
+      const response = await fetch(`${API_URL}/schedule_post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -138,19 +134,14 @@ function MyVideos() {
         showSnackbar(data.error || 'Failed to schedule post on TikTok.', 'error');
       }
     } catch (error) {
-      console.error('Error scheduling post:', error);
+      console.error(error);
       showSnackbar('Error scheduling post.', 'error');
     }
     handleCloseScheduleDialog();
   };
 
-  const showSnackbar = (message, severity = 'success') => {
-    setSnackbar({ open: true, message, severity });
-  };
-
-  const handleCloseSnackbar = () => {
-    setSnackbar(prev => ({ ...prev, open: false }));
-  };
+  const showSnackbar = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
+  const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
 
   return (
     <>
@@ -169,6 +160,9 @@ function MyVideos() {
               Connect TikTok
             </Button>
           )}
+        </Toolbar>
+        <Toolbar>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>My Videos</Typography>
         </Toolbar>
       </AppBar>
 
@@ -238,16 +232,13 @@ function MyVideos() {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseScheduleDialog}>Cancel</Button>
-          <Button onClick={handleScheduleVideo} variant="contained" color="primary">Schedule</Button>
+          <Button onClick={handleScheduleVideo} variant="contained" color="primary">
+            Schedule
+          </Button>
         </DialogActions>
       </Dialog>
 
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
+      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
         <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
           {snackbar.message}
         </Alert>

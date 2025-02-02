@@ -31,15 +31,16 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Base URL for constructing media links. On production, set BASE_URL in your .env.
+# Use environment variables for URLs
 BASE_URL = os.getenv('BASE_URL', 'http://localhost:5000')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Initialize the Flask app
 app = Flask(__name__, static_folder='static')
 app.secret_key = os.getenv('SECRET_KEY', 'your_secret_key_here')
 
-# Allow requests from the frontend (adjust origins for production)
-CORS(app, supports_credentials=True, resources={r"/*": {"origins": os.getenv("FRONTEND_URL", "http://localhost:3000")}})
+# Allow requests from the frontend (using FRONTEND_URL)
+CORS(app, supports_credentials=True, resources={r"/*": {"origins": FRONTEND_URL}})
 
 # Configure Celery (ensure Redis is running)
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
@@ -102,6 +103,9 @@ def generate_voice_previews(elevenlabs_api_key):
 ###############################################################################
 # Routes
 ###############################################################################
+@app.route('/')
+def index():
+    return "Welcome to Aragornic AI Video Creator API!"
 
 @app.route('/generate_all_previews', methods=['POST'])
 def generate_all_previews():
@@ -299,7 +303,6 @@ def create_video():
     if not os.path.exists(static_dir):
         os.makedirs(static_dir)
     try:
-        # Resolve local audio file path
         parsed_audio_url = urlparse(audio_url)
         local_audio_file = parsed_audio_url.path.lstrip('/')
         if not os.path.exists(local_audio_file):
@@ -315,7 +318,6 @@ def create_video():
             if os.path.exists(local_path):
                 local_media_files.append(local_path)
             else:
-                # Download remote media
                 response = requests.get(url, stream=True)
                 if response.status_code == 200:
                     filename = secure_filename(url.split('/')[-1].split('?')[0])
@@ -369,7 +371,6 @@ def create_video():
         final_video_path = os.path.join(static_dir, final_video_name)
         final_clip.write_videofile(final_video_path, fps=24, codec="libx264", audio_codec="aac")
 
-        # Close all clips
         audio_clip.close()
         final_clip.close()
         for clip in clips:
@@ -440,11 +441,10 @@ def tiktok_callback():
         if data.get('error_code') != 0:
             return jsonify({"error": data.get('description', 'Failed to obtain access token.')}), 400
         access_token = data['data']['access_token']
-        refresh_token = data['data']['refresh_token']
         user_id = data['data']['user_id']
         session['tiktok_access_token'] = access_token
         session['tiktok_user_id'] = user_id
-        return redirect(os.getenv('FRONTEND_URL', 'http://localhost:3000') + "/my-videos")
+        return redirect(FRONTEND_URL + "/my-videos")
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
