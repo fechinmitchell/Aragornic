@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: aragornic-backend
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn app:app"
+    envVars:
+      - key: TIKTOK_CLIENT_ID
+        sync: false
+      - key: TIKTOK_CLIENT_SECRET
+        sync: false
+      - key: SECRET_KEY
+        sync: false
