@@ -1,16 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import {
-  AppBar, Toolbar, Typography, Container, TextField, Button, Grid, Card, CardMedia,
-  MenuItem, Select, FormControl, InputLabel, CircularProgress, Box, IconButton,
-  Tooltip, RadioGroup, FormControlLabel, Radio, InputAdornment, Snackbar, Alert
+  AppBar,
+  Toolbar,
+  Typography,
+  Container,
+  TextField,
+  Button,
+  Grid,
+  Card,
+  CardMedia,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
+  CircularProgress,
+  Box,
+  IconButton,
+  Tooltip,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
+  InputAdornment,
+  Snackbar,
+  Alert,
 } from '@mui/material';
-import { PhotoCamera, Upload as UploadIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import { FaMagic } from 'react-icons/fa';
+import {
+  PhotoCamera,
+  Upload as UploadIcon,
+  Delete as DeleteIcon,
+  Schedule as ScheduleIcon,
+} from '@mui/icons-material';
+import { FaMagic } from 'react-icons/fa'; // Magic wand icon from react-icons
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import { getStoredVideos, storeVideo, updateVideo, deleteVideo } from '../utils/localStorage';
+import {
+  getStoredVideos,
+  storeVideo,
+  updateVideo,
+  deleteVideo,
+} from '../utils/localStorage';
 
-// Use the API URL from the environment variable
+// Use the API URL from environment variables (REACT_APP_API_URL)
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 function CreateVideo() {
@@ -28,20 +58,24 @@ function CreateVideo() {
   const [topic, setTopic] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
   const [model, setModel] = useState('gpt-3.5-turbo');
-  const [scriptLength, setScriptLength] = useState('1h');
+  const [scriptLength, setScriptLength] = useState('1h'); // Default to 1 hour
   const [script, setScript] = useState('');
   const [imageSize, setImageSize] = useState('512x512');
   const [ttsModel, setTtsModel] = useState('');
-  const [audioUrl, setAudioUrl] = useState('');
+  const [audioUrl, setAudioUrl] = useState(''); // Use camelCase throughout
   const [videoUrl, setVideoUrl] = useState('');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
   const [availableVoices, setAvailableVoices] = useState([]);
+
+  // Loading states
   const [loadingTitle, setLoadingTitle] = useState(false);
   const [loadingScript, setLoadingScript] = useState(false);
   const [loadingImage, setLoadingImage] = useState(false);
   const [loadingVideo, setLoadingVideo] = useState(false);
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+
+  // Media files and other state
   const [mediaFiles, setMediaFiles] = useState([]);
   const [splitType, setSplitType] = useState('equal');
   const [durationPerMedia, setDurationPerMedia] = useState('');
@@ -61,7 +95,10 @@ function CreateVideo() {
     }
   }, [videoUrl, videoTitle, fileName]);
 
-  // Functions to handle API calls
+  // Handler functions
+  const showSnackbar = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
+  const handleCloseSnackbar = () => setSnackbar(prev => ({ ...prev, open: false }));
+
   const handleGenerateTitle = async () => {
     if (!openAiKey || !topic.trim()) {
       showSnackbar('Please enter your OpenAI API key and topic.', 'warning');
@@ -138,33 +175,6 @@ function CreateVideo() {
     }
   };
 
-  const fetchVoices = async () => {
-    if (!elevenLabsApiKey) {
-      showSnackbar('Please enter your Eleven Labs API key.', 'warning');
-      return;
-    }
-    try {
-      const res = await fetch(`${API_URL}/list_voices?elevenlabs_api_key=${elevenLabsApiKey}`);
-      const data = await res.json();
-      if (data.error) return showSnackbar(data.error, 'error');
-      setAvailableVoices(data.voices || []);
-      showSnackbar('Voices fetched successfully!', 'success');
-    } catch (err) {
-      console.error(err);
-      showSnackbar('Error fetching voices.', 'error');
-    }
-  };
-
-  useEffect(() => {
-    if (elevenLabsApiKey) fetchVoices();
-  }, [elevenLabsApiKey]);
-
-  useEffect(() => {
-    if (availableVoices.length > 0 && !ttsModel) {
-      setTtsModel(availableVoices[0].voice_id);
-    }
-  }, [availableVoices, ttsModel]);
-
   const handleGenerateAudio = async () => {
     if (!elevenLabsApiKey || !script.trim() || !ttsModel) {
       showSnackbar('Please enter your Eleven Labs API key, script, and select a voice.', 'warning');
@@ -198,7 +208,10 @@ function CreateVideo() {
     }
     setUploadingMedia(true);
     try {
-      const res = await fetch(`${API_URL}/upload_media`, { method: 'POST', body: formData });
+      const res = await fetch(`${API_URL}/upload_media`, {
+        method: 'POST',
+        body: formData,
+      });
       const data = await res.json();
       if (data.error) return showSnackbar(data.error, 'error');
       setMediaFiles(prev => [...prev, ...data.media_urls]);
@@ -326,14 +339,6 @@ function CreateVideo() {
     }
   };
 
-  const showSnackbar = (message, severity = 'success') => {
-    setSnackbar({ open: true, message, severity });
-  };
-
-  const handleCloseSnackbar = () => {
-    setSnackbar(prev => ({ ...prev, open: false }));
-  };
-
   return (
     <>
       <AppBar position="static" sx={{ backgroundColor: '#673ab7' }}>
@@ -355,13 +360,11 @@ function CreateVideo() {
           />
         </Toolbar>
       </AppBar>
-
       <Container sx={{ mt: 4, mb: 4 }}>
         <Box mb={3}>
           <Typography variant="h5" gutterBottom>Topic</Typography>
           <TextField fullWidth placeholder="E.g. Ancient Rome, World War II..." value={topic} onChange={(e) => setTopic(e.target.value)} />
         </Box>
-
         <Box mb={3}>
           <Typography variant="h6" gutterBottom>Video Title</Typography>
           <Box display="flex" gap={2}>
@@ -376,7 +379,6 @@ function CreateVideo() {
             </Button>
           </Box>
         </Box>
-
         <Box mb={3}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
@@ -405,7 +407,6 @@ function CreateVideo() {
             </Grid>
           </Grid>
         </Box>
-
         <Box mb={3}>
           <Typography variant="h6" gutterBottom>Script</Typography>
           <TextField fullWidth multiline rows={8} value={script} onChange={(e) => setScript(e.target.value)} />
@@ -424,7 +425,6 @@ function CreateVideo() {
             {loadingScript ? 'Generating Script...' : 'Generate Script'}
           </Button>
         </Box>
-
         <Box mb={3}>
           <Typography variant="h6" gutterBottom>Generate Images (DALL·E)</Typography>
           <FormControl fullWidth sx={{ mb: 2 }}>
@@ -470,7 +470,6 @@ function CreateVideo() {
             </Box>
           )}
         </Box>
-
         <Box mb={3}>
           <Typography variant="h6" gutterBottom>Upload Images and Videos</Typography>
           <Button variant="contained" component="label" disabled={uploadingMedia} startIcon={<UploadIcon />} sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}>
@@ -510,7 +509,6 @@ function CreateVideo() {
             </Box>
           )}
         </Box>
-
         <Box mb={3}>
           <Typography variant="h6" gutterBottom>Eleven Labs API Key</Typography>
           <TextField fullWidth placeholder="Enter your Eleven Labs API Key" value={elevenLabsApiKey} onChange={(e) => setElevenLabsApiKey(e.target.value)} sx={{ mb: 2 }} type="password" />
@@ -520,7 +518,6 @@ function CreateVideo() {
           <Typography variant="h6" gutterBottom>Script</Typography>
           <TextField fullWidth multiline rows={8} placeholder="Enter your script here..." value={script} onChange={(e) => setScript(e.target.value)} />
         </Box>
-
         <Box mb={3}>
           <FormControl fullWidth>
             <InputLabel>Voice Model</InputLabel>
@@ -531,7 +528,6 @@ function CreateVideo() {
             </Select>
           </FormControl>
         </Box>
-
         {!audioUrl && ttsModel && (
           <Box mb={3}>
             <Typography variant="h6" gutterBottom>Preview of Selected Voice</Typography>
@@ -540,7 +536,6 @@ function CreateVideo() {
             </audio>
           </Box>
         )}
-
         {audioUrl && (
           <Box mb={3}>
             <Typography variant="h6" gutterBottom>Preview Audio</Typography>
@@ -549,13 +544,11 @@ function CreateVideo() {
             </audio>
           </Box>
         )}
-
         <Box mb={3} textAlign="center">
           <Button variant="contained" onClick={handleGenerateAudio} disabled={loadingAudio} startIcon={loadingAudio ? <CircularProgress size={20} /> : <PhotoCamera />} sx={{ backgroundColor: '#9c27b0', color: 'white', '&:hover': { backgroundColor: '#7b1fa2' } }}>
             {loadingAudio ? 'Generating Audio...' : 'Generate Audio'}
           </Button>
         </Box>
-
         <Box mb={3}>
           <Typography variant="h6" gutterBottom>Compile Final Video</Typography>
           <Box mb={2}>
@@ -580,7 +573,6 @@ function CreateVideo() {
             </Box>
           )}
         </Box>
-
         {videoUrl && (
           <Box sx={{ mb: 3, textAlign: 'left' }}>
             <Typography variant="h6" gutterBottom>Download Options</Typography>
@@ -598,12 +590,10 @@ function CreateVideo() {
             </Button>
           </Box>
         )}
-
         <Box mb={3}>
           <Typography variant="h6">Total Cost: ${cost.toFixed(2)}</Typography>
         </Box>
       </Container>
-
       <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
         <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
           {snackbar.message}
