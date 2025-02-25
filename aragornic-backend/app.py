@@ -31,16 +31,25 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Use environment variables for URLs
-BASE_URL = os.getenv('BASE_URL', 'http://localhost:5000')
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+# Determine if we're in production or local environment
+BASE_URL = os.getenv('PROD_BASE_URL', 'http://localhost:5000')
+FRONTEND_URL = os.getenv('PROD_FRONTEND_URL', 'http://localhost:3000')
+
+if os.getenv('FLASK_ENV') == 'production':
+    BASE_URL = os.getenv('PROD_BASE_URL')
+    FRONTEND_URL = os.getenv('PROD_FRONTEND_URL')
 
 # Initialize the Flask app
 app = Flask(__name__, static_folder='static')
 app.secret_key = os.getenv('SECRET_KEY', 'your_secret_key_here')
 
 # Allow requests from the frontend (using FRONTEND_URL)
-CORS(app, supports_credentials=True, resources={r"/*": {"origins": FRONTEND_URL}})
+CORS(app, resources={
+    r"/*": {
+        "origins": [FRONTEND_URL, "http://localhost:3000"],
+        "supports_credentials": True
+    }
+})
 
 # Configure Celery (ensure Redis is running)
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
@@ -267,27 +276,38 @@ def generate_audio_elevenlabs():
     script_text = data.get('script', '')
     voice_id = data.get('voice_id')
     elevenlabs_api_key = data.get('elevenlabs_api_key', '')
+    
     if not elevenlabs_api_key:
         return jsonify({"error": "No ElevenLabs API key provided."}), 400
     if not script_text:
         return jsonify({"error": "No script provided."}), 400
     if not voice_id:
         return jsonify({"error": "No voice_id provided."}), 400
+    
     static_dir = app.static_folder
     if not os.path.exists(static_dir):
         os.makedirs(static_dir)
+    
     headers = {'xi-api-key': elevenlabs_api_key, 'Content-Type': 'application/json'}
     payload = {'text': script_text, 'model_id': 'eleven_multilingual_v2'}
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    
     try:
         response = requests.post(tts_url, headers=headers, json=payload)
         response.raise_for_status()
+        
+        # Saving the file locally in static folder
         local_audio_file = os.path.join(static_dir, f"output_audio_{uuid.uuid4().hex}.mp3")
         with open(local_audio_file, "wb") as f:
             f.write(response.content)
-        return jsonify({"audio_file_url": f"{BASE_URL}/{local_audio_file}"}), 200
+        
+        # Returning the correct URL for static file serving
+        audio_file_url = url_for('static', filename=os.path.relpath(local_audio_file, static_dir))
+        return jsonify({"audio_file_url": f"{BASE_URL}/{audio_file_url}"}), 200
+    
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/create_video', methods=['POST'])
 def create_video():
