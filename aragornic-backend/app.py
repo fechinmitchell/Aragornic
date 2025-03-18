@@ -2,8 +2,8 @@
 app.py
 
 Flask server that uses the user-provided OpenAI API key in each request.
-Handles multiple media uploads, video creation, TikTok OAuth authentication,
-and scheduling of video posts via Celery.
+Handles multiple media uploads, video creation, TikTok OAuth authentication.
+Redis and Celery dependencies removed.
 """
 
 from flask import Flask, request, jsonify, send_from_directory, redirect, session, url_for
@@ -24,7 +24,6 @@ from moviepy.editor import (
 )
 from werkzeug.exceptions import NotFound
 from datetime import datetime
-from celery import Celery
 import json
 from dotenv import load_dotenv
 
@@ -32,12 +31,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Determine if we're in production or local environment
-BASE_URL = os.getenv('PROD_BASE_URL', 'http://localhost:5000')
-FRONTEND_URL = os.getenv('PROD_FRONTEND_URL', 'http://localhost:3000')
+BASE_URL = os.getenv('BASE_URL', 'http://localhost:5000')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 if os.getenv('FLASK_ENV') == 'production':
-    BASE_URL = os.getenv('PROD_BASE_URL')
-    FRONTEND_URL = os.getenv('PROD_FRONTEND_URL')
+    BASE_URL = os.getenv('BASE_URL')
+    FRONTEND_URL = os.getenv('FRONTEND_URL')
 
 # Initialize the Flask app
 app = Flask(__name__, static_folder='static')
@@ -50,12 +49,6 @@ CORS(app, resources={
         "supports_credentials": True
     }
 })
-
-# Configure Celery (ensure Redis is running)
-app.config['CELERY_BROKER_URL'] = 'redis://localhost:6379/0'
-app.config['CELERY_RESULT_BACKEND'] = 'redis://localhost:6379/0'
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(app.config)
 
 ###############################################################################
 # Helper Functions
@@ -476,67 +469,21 @@ def tiktok_status():
         return jsonify({"authenticated": True, "access_token": access_token, "user_id": user_id}), 200
     else:
         return jsonify({"authenticated": False}), 200
+        
+@app.route('/tiktok_login_url', methods=['GET'])
+def tiktok_login_url():
+    client_id = os.getenv('TIKTOK_CLIENT_ID', 'YOUR_TIKTOK_CLIENT_ID')
+    redirect_uri = f"{BASE_URL}/tiktok_callback"
+    response_type = 'code'
+    scope = 'video.upload'
+    state = 'random_state_string'
+    auth_url = f"https://open-api.tiktok.com/platform/oauth/connect/?client_key={client_id}&redirect_uri={urlencode({'': redirect_uri})[1:]}&response_type={response_type}&scope={scope}&state={state}"
+    return jsonify({"auth_url": auth_url}), 200
 
 @app.route('/schedule_post', methods=['POST'])
 def schedule_post():
-    data = request.get_json() or {}
-    video_id = data.get('video_id')
-    scheduled_time = data.get('scheduled_time')  # ISO format
-    tiktok_access_token = data.get('tiktok_access_token')
-    if not video_id or not scheduled_time or not tiktok_access_token:
-        return jsonify({"error": "Missing required fields."}), 400
-    videos = getStoredVideos()
-    video = next((v for v in videos if v['id'] == video_id), None)
-    if not video:
-        return jsonify({"error": "Video not found."}), 404
-    try:
-        scheduled_datetime = datetime.fromisoformat(scheduled_time)
-        if scheduled_datetime < datetime.now():
-            return jsonify({"error": "Scheduled time must be in the future."}), 400
-        post_video_to_tiktok.apply_async(args=[video_id, tiktok_access_token], eta=scheduled_datetime)
-        return jsonify({"message": "Video scheduled successfully."}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@celery.task
-def post_video_to_tiktok(video_id, tiktok_access_token):
-    videos = getStoredVideos()
-    video = next((v for v in videos if v['id'] == video_id), None)
-    if not video:
-        print(f"Video with ID {video_id} not found.")
-        return
-    video_url = video.get('video_url')
-    if not video_url:
-        print(f"No video URL found for video ID {video_id}.")
-        return
-    try:
-        response = requests.get(video_url, stream=True)
-        response.raise_for_status()
-        video_content = response.content
-    except requests.exceptions.RequestException as e:
-        print(f"Error downloading video: {e}")
-        return
-    temp_video_path = f"temp_{uuid.uuid4().hex}.mp4"
-    with open(temp_video_path, 'wb') as f:
-        f.write(video_content)
-    upload_url = 'https://open-api.tiktok.com/share/video/upload/'
-    headers = {'Authorization': f'Bearer {tiktok_access_token}'}
-    files = {'video': open(temp_video_path, 'rb')}
-    data = {'description': 'Scheduled video from Aragornic AI Video Creator.'}
-    try:
-        upload_resp = requests.post(upload_url, headers=headers, files=files, data=data)
-        upload_resp.raise_for_status()
-        upload_data = upload_resp.json()
-        if upload_data.get('error_code') != 0:
-            print(f"Error uploading video to TikTok: {upload_data.get('description')}")
-            return
-        video_id_tiktok = upload_data['data']['video_id']
-        print(f"Video {video_id} posted to TikTok successfully with TikTok video ID {video_id_tiktok}.")
-    except requests.exceptions.RequestException as e:
-        print(f"Error uploading video to TikTok: {e}")
-    finally:
-        if os.path.exists(temp_video_path):
-            os.remove(temp_video_path)
+    # This now returns a message that scheduling is disabled
+    return jsonify({"message": "Post scheduling through TikTok API is disabled in this version."}), 200
 
 ###############################################################################
 # Utility Functions: Local Storage for Videos

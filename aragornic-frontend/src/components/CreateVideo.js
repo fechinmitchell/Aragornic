@@ -30,21 +30,12 @@ import {
   PhotoCamera,
   Upload as UploadIcon,
   Delete as DeleteIcon,
-  Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { FaMagic } from 'react-icons/fa'; // Magic wand icon from react-icons
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import {
-  getStoredVideos,
-  storeVideo,
-  updateVideo,
-  deleteVideo,
-} from '../utils/localStorage';
-
-// Use the API URL from environment variables (REACT_APP_API_URL)
-// For example, in your .env file: REACT_APP_API_URL=https://aragornic.onrender.com
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+import { storeVideo } from '../utils/localStorage';
+import { apiRequest } from '../utils/apiService';
 
 function CreateVideo() {
   // Utility functions
@@ -113,11 +104,41 @@ function CreateVideo() {
     }
   }, [videoUrl, videoTitle, fileName]);
 
+  // Fetch voices when elevenLabsApiKey changes
+  useEffect(() => {
+    if (elevenLabsApiKey) {
+      fetchVoices();
+    }
+  }, [elevenLabsApiKey]);
+
+  // Auto-select the first voice if availableVoices is non-empty and ttsModel is still empty
+  useEffect(() => {
+    if (availableVoices.length > 0 && !ttsModel) {
+      setTtsModel(availableVoices[0].voice_id);
+      console.log('Auto-selected voice:', availableVoices[0].voice_id);
+    }
+  }, [availableVoices, ttsModel]);
+
   // Snackbar helper functions
   const showSnackbar = (message, severity = 'success') =>
     setSnackbar({ open: true, message, severity });
   const handleCloseSnackbar = () =>
     setSnackbar((prev) => ({ ...prev, open: false }));
+
+  // Fetch voices
+  const fetchVoices = async () => {
+    if (!elevenLabsApiKey) {
+      showSnackbar('Please enter your Eleven Labs API key.', 'warning');
+      return;
+    }
+    try {
+      const data = await apiRequest(`/list_voices?elevenlabs_api_key=${elevenLabsApiKey}`);
+      setAvailableVoices(data.voices || []);
+    } catch (err) {
+      console.error(err);
+      showSnackbar('Error fetching voices: ' + err.message, 'error');
+    }
+  };
 
   // Handler to generate video title
   const handleGenerateTitle = async () => {
@@ -127,22 +148,18 @@ function CreateVideo() {
     }
     setLoadingTitle(true);
     try {
-      const res = await fetch(`${API_URL}/generate_title`, {
+      const data = await apiRequest('/generate_title', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic, model, user_api_key: openAiKey }),
       });
-      const data = await res.json();
-      if (data.error) {
-        showSnackbar(data.error, 'error');
-        return;
-      }
+      
       setVideoTitle(data.title || '');
       if (data.cost) setCost((prev) => prev + data.cost);
       showSnackbar('Title generated successfully!', 'success');
     } catch (err) {
       console.error(err);
-      showSnackbar('Error generating title.', 'error');
+      showSnackbar('Error generating title: ' + err.message, 'error');
     } finally {
       setLoadingTitle(false);
     }
@@ -156,7 +173,7 @@ function CreateVideo() {
     }
     setLoadingScript(true);
     try {
-      const res = await fetch(`${API_URL}/generate_script`, {
+      const data = await apiRequest('/generate_script', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -166,17 +183,13 @@ function CreateVideo() {
           user_api_key: openAiKey,
         }),
       });
-      const data = await res.json();
-      if (data.error) {
-        showSnackbar(data.error, 'error');
-        return;
-      }
+      
       setScript(data.script || '');
       if (data.script_cost) setCost((prev) => prev + data.script_cost);
       showSnackbar('Script generated successfully!', 'success');
     } catch (err) {
       console.error(err);
-      showSnackbar('Error generating script.', 'error');
+      showSnackbar('Error generating script: ' + err.message, 'error');
     } finally {
       setLoadingScript(false);
     }
@@ -191,7 +204,7 @@ function CreateVideo() {
     setLoadingImage(true);
     try {
       const prompt = `A cinematic, documentary-style scene representing ${topic}. Scenic, photorealistic, no text, no words, no lettering.`;
-      const res = await fetch(`${API_URL}/generate_image`, {
+      const data = await apiRequest('/generate_image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -201,51 +214,15 @@ function CreateVideo() {
           user_api_key: openAiKey,
         }),
       });
-      const data = await res.json();
-      if (data.error) {
-        showSnackbar(data.error, 'error');
-        return;
-      }
+      
       setMediaFiles((prev) => [...prev, ...data.image_urls]);
       if (data.cost) setCost((prev) => prev + data.cost);
       showSnackbar('Images generated successfully!', 'success');
     } catch (err) {
       console.error(err);
-      showSnackbar('Error generating images.', 'error');
+      showSnackbar('Error generating images: ' + err.message, 'error');
     } finally {
       setLoadingImage(false);
-    }
-  };
-
-  // Handler to generate audio
-  const handleGenerateAudio = async () => {
-    if (!elevenLabsApiKey || !script.trim() || !ttsModel) {
-      showSnackbar('Please enter your Eleven Labs API key, script, and select a voice.', 'warning');
-      return;
-    }
-    setLoadingAudio(true);
-    try {
-      const res = await fetch(`${API_URL}/generate_audio_elevenlabs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script,
-          voice_id: ttsModel,
-          elevenlabs_api_key: elevenLabsApiKey,
-        }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        showSnackbar(data.error, 'error');
-        return;
-      }
-      setAudioUrl(data.audio_file_url || '');
-      showSnackbar('Audio generated successfully!', 'success');
-    } catch (err) {
-      console.error(err);
-      showSnackbar('Error generating audio.', 'error');
-    } finally {
-      setLoadingAudio(false);
     }
   };
 
@@ -259,20 +236,16 @@ function CreateVideo() {
     }
     setUploadingMedia(true);
     try {
-      const res = await fetch(`${API_URL}/upload_media`, {
+      const data = await apiRequest('/upload_media', {
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
-      if (data.error) {
-        showSnackbar(data.error, 'error');
-        return;
-      }
+      
       setMediaFiles((prev) => [...prev, ...data.media_urls]);
       showSnackbar('Media uploaded successfully!', 'success');
     } catch (err) {
       console.error(err);
-      showSnackbar('Error uploading media.', 'error');
+      showSnackbar('Error uploading media: ' + err.message, 'error');
     } finally {
       setUploadingMedia(false);
     }
@@ -282,6 +255,34 @@ function CreateVideo() {
   const handleRemoveMedia = (index) => {
     setMediaFiles((prev) => prev.filter((_, i) => i !== index));
     showSnackbar('Media removed.', 'info');
+  };
+
+  // Handler to generate audio
+  const handleGenerateAudio = async () => {
+    if (!elevenLabsApiKey || !script.trim() || !ttsModel) {
+      showSnackbar('Please enter your Eleven Labs API key, script, and select a voice.', 'warning');
+      return;
+    }
+    setLoadingAudio(true);
+    try {
+      const data = await apiRequest('/generate_audio_elevenlabs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script,
+          voice_id: ttsModel,
+          elevenlabs_api_key: elevenLabsApiKey,
+        }),
+      });
+      
+      setAudioUrl(data.audio_file_url || '');
+      showSnackbar('Audio generated successfully!', 'success');
+    } catch (err) {
+      console.error(err);
+      showSnackbar('Error generating audio: ' + err.message, 'error');
+    } finally {
+      setLoadingAudio(false);
+    }
   };
 
   // Handler to create final video
@@ -308,7 +309,8 @@ function CreateVideo() {
         setLoadingVideo(false);
         return;
       }
-      const res = await fetch(`${API_URL}/create_video`, {
+      
+      const data = await apiRequest('/create_video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -318,11 +320,7 @@ function CreateVideo() {
           user_api_key: openAiKey,
         }),
       });
-      const data = await res.json();
-      if (data.error) {
-        showSnackbar(data.error, 'error');
-        return;
-      }
+      
       setVideoUrl(data.video_url || '');
       showSnackbar('Video created successfully!', 'success');
 
@@ -342,7 +340,7 @@ function CreateVideo() {
       storeVideo(newVideo);
     } catch (err) {
       console.error(err);
-      showSnackbar('Error creating video.', 'error');
+      showSnackbar('Error creating video: ' + err.message, 'error');
     } finally {
       setLoadingVideo(false);
     }
@@ -356,9 +354,8 @@ function CreateVideo() {
     }
     const filenameFromUrl = videoUrl.split('/').pop();
     try {
-      const response = await fetch(`${API_URL}/download_video/${filenameFromUrl}`, {
-        method: 'GET',
-      });
+      const response = await fetch(`/download_video/${filenameFromUrl}`);
+      
       if (response.ok) {
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
@@ -372,11 +369,19 @@ function CreateVideo() {
         a.remove();
         showSnackbar('Video downloaded successfully!', 'success');
       } else {
-        showSnackbar('Failed to download video.', 'error');
+        throw new Error('Failed to download video.');
       }
     } catch (error) {
       console.error(error);
-      showSnackbar('Error downloading video.', 'error');
+      showSnackbar('Error downloading video: ' + error.message, 'error');
+      
+      // Try alternative download method if first attempt fails
+      try {
+        window.location.href = videoUrl;
+        showSnackbar('Redirecting to video download...', 'info');
+      } catch (redirectError) {
+        console.error(redirectError);
+      }
     }
   };
 
@@ -387,20 +392,16 @@ function CreateVideo() {
       return;
     }
     try {
-      const res = await fetch(`${API_URL}/generate_all_previews`, {
+      const data = await apiRequest('/generate_all_previews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ elevenlabs_api_key: elevenLabsApiKey }),
       });
-      const data = await res.json();
-      if (data.error) {
-        showSnackbar(data.error, 'error');
-      } else {
-        showSnackbar(data.message || 'Previews generated successfully.', 'success');
-      }
+      
+      showSnackbar(data.message || 'Previews generated successfully.', 'success');
     } catch (err) {
       console.error(err);
-      showSnackbar('Error generating previews.', 'error');
+      showSnackbar('Error generating previews: ' + err.message, 'error');
     }
   };
 
@@ -840,7 +841,7 @@ function CreateVideo() {
             <FormControl sx={{ mb: 2, width: '50%' }}>
               <InputLabel>Screen Size</InputLabel>
               <Select value={screenSize} onChange={(e) => setScreenSize(e.target.value)}>
-                <MenuItem value="1920x1080">YouTube (16:9)</MenuItem>
+              <MenuItem value="1920x1080">YouTube (16:9)</MenuItem>
                 <MenuItem value="1080x1920">TikTok (9:16)</MenuItem>
                 <MenuItem value="1080x1080">Square (1:1)</MenuItem>
               </Select>

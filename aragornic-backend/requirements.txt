@@ -4,11 +4,9 @@ openai==0.27.4
 requests==2.32.3
 pydub==0.25.1
 moviepy==1.0.3
-celery==5.4.0
 python-dotenv==1.0.1
 gunicorn==23.0.0
 elevenlabs==1.50.3
-redis==5.2.1
 pillow==10.4.0
 python-dateutil==2.9.0.post0
 aiohttp==3.11.11

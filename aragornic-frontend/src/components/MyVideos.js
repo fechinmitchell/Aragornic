@@ -1,19 +1,18 @@
+// src/components/MyVideos.js - Fixed version with apiService
+
 import React, { useState, useEffect } from 'react';
 import {
   AppBar, Toolbar, Typography, Box, Grid, Card, CardMedia, CardContent,
   CardActions, Button, IconButton, Tooltip, CircularProgress, Snackbar,
-  Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField,
-  FormControl, InputLabel, Select, MenuItem
+  Alert, Dialog, DialogTitle, DialogContent, DialogActions, TextField
 } from '@mui/material';
-import { Delete as DeleteIcon, Schedule as ScheduleIcon, Login as LoginIcon, PhotoCamera } from '@mui/icons-material';
+import { Delete as DeleteIcon, Schedule as ScheduleIcon, Login as LoginIcon } from '@mui/icons-material';
 import { Link, useNavigate } from 'react-router-dom';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import { format } from 'date-fns';
 import { getStoredVideos, deleteVideo, updateVideo } from '../utils/localStorage';
-
-// Use the API URL from environment variables (if needed)
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+import { apiRequest } from '../utils/apiService';
 
 function MyVideos() {
   const [videos, setVideos] = useState([]);
@@ -47,9 +46,8 @@ function MyVideos() {
   useEffect(() => {
     const fetchTikTokStatus = async () => {
       try {
-        const response = await fetch(`${API_URL}/tiktok_status`, { credentials: 'include' });
-        const data = await response.json();
-        if (response.ok && data.authenticated) {
+        const data = await apiRequest('/tiktok_status', { credentials: 'include' });
+        if (data.authenticated) {
           setTiktokAuthenticated(true);
           setTiktokAccessToken(data.access_token);
         }
@@ -62,14 +60,14 @@ function MyVideos() {
 
   const handleDateChange = (date) => setSelectedDate(date);
 
-  const handleTikTokLogin = () => {
-    const client_id = process.env.REACT_APP_TIKTOK_CLIENT_ID || 'YOUR_TIKTOK_CLIENT_ID';
-    const redirect_uri = `${API_URL}/tiktok_callback`;
-    const response_type = 'code';
-    const scope = 'video.upload';
-    const state = 'random_state_string';
-    const authURL = `https://open-api.tiktok.com/platform/oauth/connect/?client_key=${client_id}&redirect_uri=${encodeURIComponent(redirect_uri)}&response_type=${response_type}&scope=${scope}&state=${state}`;
-    window.location.href = authURL;
+  const handleTikTokLogin = async () => {
+    try {
+      // Get client ID from production endpoint first, fall back to local if that fails
+      const data = await apiRequest('/tiktok_login_url');
+      window.location.href = data.auth_url;
+    } catch (error) {
+      showSnackbar('Error connecting to TikTok: ' + error.message, 'error');
+    }
   };
 
   const handleDeleteVideo = (id) => {
@@ -97,28 +95,9 @@ function MyVideos() {
       showSnackbar('Please select a date and time.', 'warning');
       return;
     }
-    if (!tiktokAuthenticated || !tiktokAccessToken) {
-      showSnackbar('Please authenticate with TikTok first.', 'warning');
-      return;
-    }
-    const selectedDateObj = new Date(selectedDate);
-    const scheduledDateObj = new Date(scheduleDateTime);
-    if (
-      selectedDateObj.getFullYear() !== scheduledDateObj.getFullYear() ||
-      selectedDateObj.getMonth() !== scheduledDateObj.getMonth() ||
-      selectedDateObj.getDate() !== scheduledDateObj.getDate()
-    ) {
-      showSnackbar('Scheduled time must be on the selected date.', 'warning');
-      return;
-    }
-    const updatedVideos = videos.map(video =>
-      video.id === selectedVideo.id ? { ...video, scheduled_post: scheduleDateTime } : video
-    );
-    updateVideo(updatedVideos.find(v => v.id === selectedVideo.id));
-    setVideos(updatedVideos);
-    showSnackbar('Video scheduled successfully!', 'success');
+    
     try {
-      const response = await fetch(`${API_URL}/schedule_post`, {
+      await apiRequest('/schedule_post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -127,17 +106,21 @@ function MyVideos() {
           tiktok_access_token: tiktokAccessToken,
         }),
       });
-      const data = await response.json();
-      if (response.ok) {
-        showSnackbar('Post scheduled on TikTok successfully!', 'success');
-      } else {
-        showSnackbar(data.error || 'Failed to schedule post on TikTok.', 'error');
-      }
+      
+      // Update local state
+      const updatedVideo = { ...selectedVideo, scheduled_post: scheduleDateTime };
+      updateVideo(updatedVideo.id, updatedVideo);
+      
+      // Update the videos list
+      setVideos(videos.map(video => 
+        video.id === selectedVideo.id ? updatedVideo : video
+      ));
+      
+      showSnackbar('Video scheduled successfully!', 'success');
+      handleCloseScheduleDialog();
     } catch (error) {
-      console.error(error);
-      showSnackbar('Error scheduling post.', 'error');
+      showSnackbar('Error scheduling post: ' + error.message, 'error');
     }
-    handleCloseScheduleDialog();
   };
 
   const showSnackbar = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
@@ -226,16 +209,31 @@ function MyVideos() {
             onChange={(e) => setScheduleDateTime(e.target.value)}
             sx={{ mt: 2 }}
           />
+          {!tiktokAuthenticated && (
+            <Typography variant="body2" color="error" sx={{ mt: 2 }}>
+              Please connect your TikTok account before scheduling posts.
+            </Typography>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseScheduleDialog}>Cancel</Button>
-          <Button onClick={handleScheduleVideo} variant="contained" color="primary">
+          <Button 
+            onClick={handleScheduleVideo} 
+            variant="contained" 
+            color="primary"
+            disabled={!tiktokAuthenticated || !scheduleDateTime}
+          >
             Schedule
           </Button>
         </DialogActions>
       </Dialog>
 
-      <Snackbar open={snackbar.open} autoHideDuration={6000} onClose={handleCloseSnackbar} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+      <Snackbar 
+        open={snackbar.open} 
+        autoHideDuration={6000} 
+        onClose={handleCloseSnackbar} 
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
         <Alert onClose={handleCloseSnackbar} severity={snackbar.severity} sx={{ width: '100%' }}>
           {snackbar.message}
         </Alert>
