@@ -1,20 +1,19 @@
-"""
-app.py
-
-Flask server that uses the user-provided OpenAI API key in each request.
-Handles multiple media uploads, video creation, TikTok OAuth authentication.
-Redis and Celery dependencies removed.
-"""
-
-from flask import Flask, request, jsonify, send_from_directory, redirect, session, url_for
-from flask_cors import CORS
-from werkzeug.utils import secure_filename
-import openai
-import requests
 import os
 import uuid
 import io
+import tempfile
+import time
+import json
 from urllib.parse import urlparse, urlencode
+from datetime import datetime
+
+import requests
+from flask import Flask, request, jsonify, send_file, redirect, session, url_for, after_this_request
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+from werkzeug.exceptions import NotFound
+from dotenv import load_dotenv
+
 from pydub import AudioSegment
 from moviepy.editor import (
     VideoFileClip,
@@ -22,10 +21,6 @@ from moviepy.editor import (
     concatenate_videoclips,
     ImageClip
 )
-from werkzeug.exceptions import NotFound
-from datetime import datetime
-import json
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,13 +37,18 @@ if os.getenv('FLASK_ENV') == 'production':
 app = Flask(__name__, static_folder='static')
 app.secret_key = os.getenv('SECRET_KEY', 'your_secret_key_here')
 
-# Allow requests from the frontend (using FRONTEND_URL)
+# Allow requests from the frontend
 CORS(app, resources={
     r"/*": {
         "origins": [FRONTEND_URL, "http://localhost:3000"],
         "supports_credentials": True
     }
 })
+
+# Create a temporary directory for generated files (if it doesn't exist)
+TEMP_DIR = os.path.join(os.getcwd(), 'temp')
+if not os.path.exists(TEMP_DIR):
+    os.makedirs(TEMP_DIR)
 
 ###############################################################################
 # Helper Functions
@@ -133,6 +133,7 @@ def generate_title():
     user_api_key = data.get('user_api_key', '')
     if not user_api_key:
         return jsonify({"error": "No API key provided."}), 400
+    import openai
     openai.api_key = user_api_key
     prompt = f"Suggest a concise, captivating video title about '{topic}'."
     try:
@@ -172,6 +173,7 @@ def generate_script():
         return jsonify({"error": f"Invalid script length: {length}."}), 400
     words = 150 * script_duration_minutes
     tokens = int(words / 0.75)
+    import openai
     openai.api_key = user_api_key
     prompt = (
         f"Write a captivating and detailed {script_duration_minutes} minute documentary story about {topic}. "
@@ -210,6 +212,7 @@ def generate_image():
     user_api_key = data.get('user_api_key', '')
     if not user_api_key:
         return jsonify({"error": "No API key provided."}), 400
+    import openai
     openai.api_key = user_api_key
     improved_prompt = f"{user_prompt}. Scenic, photorealistic, cinematic lighting, ultra high resolution with absolutely no text, no letters, no words."
     try:
@@ -263,6 +266,7 @@ def list_voices():
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
+# Updated generate_audio_elevenlabs endpoint using temporary storage and JSON response
 @app.route('/generate_audio_elevenlabs', methods=['POST'])
 def generate_audio_elevenlabs():
     data = request.get_json() or {}
@@ -277,10 +281,6 @@ def generate_audio_elevenlabs():
     if not voice_id:
         return jsonify({"error": "No voice_id provided."}), 400
     
-    static_dir = app.static_folder
-    if not os.path.exists(static_dir):
-        os.makedirs(static_dir)
-    
     headers = {'xi-api-key': elevenlabs_api_key, 'Content-Type': 'application/json'}
     payload = {'text': script_text, 'model_id': 'eleven_multilingual_v2'}
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
@@ -289,19 +289,36 @@ def generate_audio_elevenlabs():
         response = requests.post(tts_url, headers=headers, json=payload)
         response.raise_for_status()
         
-        # Saving the file locally in static folder
-        local_audio_file = os.path.join(static_dir, f"output_audio_{uuid.uuid4().hex}.mp3")
-        with open(local_audio_file, "wb") as f:
+        # Save the generated audio to a temporary file in the TEMP_DIR
+        temp_filename = f"output_audio_{uuid.uuid4().hex}.mp3"
+        temp_audio_path = os.path.join(TEMP_DIR, temp_filename)
+        with open(temp_audio_path, "wb") as f:
             f.write(response.content)
         
-        # Returning the correct URL for static file serving
-        audio_file_url = url_for('static', filename=os.path.relpath(local_audio_file, static_dir))
-        return jsonify({"audio_file_url": f"{BASE_URL}/{audio_file_url}"}), 200
-    
+        # Return a JSON response with a download URL for the audio file
+        audio_file_url = f"{BASE_URL}/download_audio/{temp_filename}"
+        return jsonify({"audio_file_url": audio_file_url}), 200
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
+# New endpoint to serve and then delete temporary audio files
+@app.route('/download_audio/<filename>', methods=['GET'])
+def download_audio(filename):
+    file_path = os.path.join(TEMP_DIR, filename)
+    if not os.path.exists(file_path):
+        return jsonify({"error": "Audio file not found"}), 404
 
+    @after_this_request
+    def cleanup(response_obj):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print("Error cleaning up temporary audio file:", e)
+        return response_obj
+
+    return send_file(file_path, as_attachment=True, download_name=filename)
+
+# Updated create_video endpoint using temporary files
 @app.route('/create_video', methods=['POST'])
 def create_video():
     data = request.get_json() or {}
@@ -312,12 +329,18 @@ def create_video():
         return jsonify({"error": "Must provide audio_url."}), 400
     if not media_urls:
         return jsonify({"error": "Must provide at least one media URL."}), 400
-    static_dir = app.static_folder
-    if not os.path.exists(static_dir):
-        os.makedirs(static_dir)
+
     try:
+        # Retrieve the local audio file based on the provided audio_url.
+        # If the URL contains '/download_audio/', extract the filename and map it to TEMP_DIR.
         parsed_audio_url = urlparse(audio_url)
-        local_audio_file = parsed_audio_url.path.lstrip('/')
+        audio_path = parsed_audio_url.path.lstrip('/')
+        if audio_path.startswith("download_audio/"):
+            filename = audio_path.split("/", 1)[1]
+            local_audio_file = os.path.join(TEMP_DIR, filename)
+        else:
+            local_audio_file = audio_path
+
         if not os.path.exists(local_audio_file):
             return jsonify({"error": "Audio file does not exist on the server."}), 400
 
@@ -325,6 +348,7 @@ def create_video():
         audio_duration = audio_clip.duration
 
         local_media_files = []
+        # Download or use local copies of media files
         for url in media_urls:
             parsed_url = urlparse(url)
             local_path = parsed_url.path.lstrip('/')
@@ -334,11 +358,10 @@ def create_video():
                 response = requests.get(url, stream=True)
                 if response.status_code == 200:
                     filename = secure_filename(url.split('/')[-1].split('?')[0])
-                    local_path = os.path.join(static_dir, f"{uuid.uuid4().hex}_{filename}")
-                    with open(local_path, 'wb') as f:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as temp_media:
                         for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    local_media_files.append(local_path)
+                            temp_media.write(chunk)
+                        local_media_files.append(temp_media.name)
                 else:
                     return jsonify({"error": f"Failed to download media: {url}"}), 400
 
@@ -360,7 +383,6 @@ def create_video():
         clips = []
         for path in local_media_files:
             ext = os.path.splitext(path)[-1].lower().strip('.')
-            print(f"Processing file: {path}, Extension: {ext}")
             if ext in ['png', 'jpg', 'jpeg', 'gif']:
                 clip = ImageClip(path).set_duration(segment_duration)
                 clips.append(clip)
@@ -380,22 +402,32 @@ def create_video():
 
         final_clip = concatenate_videoclips(clips, method='compose')
         final_clip = final_clip.set_audio(audio_clip)
-        final_video_name = f"final_video_{uuid.uuid4().hex}.mp4"
-        final_video_path = os.path.join(static_dir, final_video_name)
+
+        # Use a temporary file for the final video
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+            final_video_path = temp_video.name
+
         final_clip.write_videofile(final_video_path, fps=24, codec="libx264", audio_codec="aac")
 
+        # Clean up resources
         audio_clip.close()
         final_clip.close()
         for clip in clips:
             if hasattr(clip, 'close'):
                 clip.close()
 
-        video_url = f"{BASE_URL}/{final_video_path}"
-        download_url = f"{BASE_URL}/download_video/{final_video_name}"
-        return jsonify({"video_url": video_url, "download_url": download_url}), 200
+        @after_this_request
+        def cleanup(response):
+            try:
+                os.remove(final_video_path)
+            except Exception as e:
+                print("Error cleaning up temporary video file:", e)
+            return response
+
+        return send_file(final_video_path, as_attachment=True, download_name="final_video.mp4")
 
     except Exception as e:
-        print(f"Error in /create_video: {e}")
+        print("Error in /create_video:", e)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/download_video/<filename>', methods=['GET'])
@@ -405,7 +437,7 @@ def download_video(filename):
         file_path = os.path.join(static_dir, filename)
         if not os.path.exists(file_path):
             raise NotFound
-        return send_from_directory(static_dir, filename, as_attachment=True)
+        return send_file(file_path, as_attachment=True)
     except NotFound:
         return jsonify({'error': 'Video file not found'}), 404
     except Exception as e:
@@ -486,7 +518,7 @@ def schedule_post():
     return jsonify({"message": "Post scheduling through TikTok API is disabled in this version."}), 200
 
 ###############################################################################
-# Utility Functions: Local Storage for Videos
+# Utility Functions: Local Storage for Videos (if needed)
 ###############################################################################
 def getStoredVideos():
     if os.path.exists('videos.json'):
