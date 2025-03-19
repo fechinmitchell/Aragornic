@@ -28,7 +28,6 @@ load_dotenv()
 # Determine if we're in production or local environment
 BASE_URL = os.getenv('BASE_URL', 'http://localhost:5000')
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-
 if os.getenv('FLASK_ENV') == 'production':
     BASE_URL = os.getenv('BASE_URL')
     FRONTEND_URL = os.getenv('FRONTEND_URL')
@@ -49,6 +48,22 @@ CORS(app, resources={
 TEMP_DIR = os.path.join(os.getcwd(), 'temp')
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
+
+# Global cleanup: Before each request, delete files in TEMP_DIR older than 10 minutes.
+@app.before_request
+def cleanup_old_temp_files():
+    max_age_seconds = 600  # 10 minutes
+    now = time.time()
+    for filename in os.listdir(TEMP_DIR):
+        file_path = os.path.join(TEMP_DIR, filename)
+        if os.path.isfile(file_path):
+            file_age = now - os.path.getmtime(file_path)
+            if file_age > max_age_seconds:
+                try:
+                    os.remove(file_path)
+                    print(f"Cleaned up old temp file: {file_path}")
+                except Exception as e:
+                    print(f"Error cleaning up {file_path}: {e}")
 
 ###############################################################################
 # Helper Functions
@@ -288,37 +303,44 @@ def generate_audio_elevenlabs():
     try:
         response = requests.post(tts_url, headers=headers, json=payload)
         response.raise_for_status()
-        
-        # Save the generated audio to a temporary file in the TEMP_DIR
+        # Save the generated audio to a temporary file in TEMP_DIR
         temp_filename = f"output_audio_{uuid.uuid4().hex}.mp3"
         temp_audio_path = os.path.join(TEMP_DIR, temp_filename)
         with open(temp_audio_path, "wb") as f:
             f.write(response.content)
-        
-        # Return a JSON response with a download URL for the audio file
+        # Return JSON with a download URL for the audio file
         audio_file_url = f"{BASE_URL}/download_audio/{temp_filename}"
         return jsonify({"audio_file_url": audio_file_url}), 200
     except requests.exceptions.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
-# New endpoint to serve and then delete temporary audio files
+# New endpoint to serve temporary audio files without immediate deletion
 @app.route('/download_audio/<filename>', methods=['GET'])
 def download_audio(filename):
     file_path = os.path.join(TEMP_DIR, filename)
     if not os.path.exists(file_path):
         return jsonify({"error": "Audio file not found"}), 404
-
-    @after_this_request
-    def cleanup(response_obj):
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print("Error cleaning up temporary audio file:", e)
-        return response_obj
-
     return send_file(file_path, as_attachment=True, download_name=filename)
 
-# Updated create_video endpoint using temporary files
+# New endpoint to clean up temporary files older than a threshold (e.g., 10 minutes)
+@app.route('/cleanup_temp_files', methods=['POST'])
+def cleanup_temp_files():
+    max_age_seconds = 600  # 10 minutes
+    now = time.time()
+    deleted_files = []
+    for filename in os.listdir(TEMP_DIR):
+        file_path = os.path.join(TEMP_DIR, filename)
+        if os.path.isfile(file_path):
+            file_age = now - os.path.getmtime(file_path)
+            if file_age > max_age_seconds:
+                try:
+                    os.remove(file_path)
+                    deleted_files.append(filename)
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {e}")
+    return jsonify({"deleted_files": deleted_files}), 200
+
+# Updated create_video endpoint that returns JSON with a video URL.
 @app.route('/create_video', methods=['POST'])
 def create_video():
     data = request.get_json() or {}
@@ -331,8 +353,7 @@ def create_video():
         return jsonify({"error": "Must provide at least one media URL."}), 400
 
     try:
-        # Retrieve the local audio file based on the provided audio_url.
-        # If the URL contains '/download_audio/', extract the filename and map it to TEMP_DIR.
+        # Retrieve the local audio file. If the URL contains '/download_audio/', map it to TEMP_DIR.
         parsed_audio_url = urlparse(audio_url)
         audio_path = parsed_audio_url.path.lstrip('/')
         if audio_path.startswith("download_audio/"):
@@ -341,8 +362,12 @@ def create_video():
         else:
             local_audio_file = audio_path
 
+        # Debug prints to help verify file path and existence
+        print("Computed local_audio_file:", local_audio_file)
+        print("File exists?", os.path.exists(local_audio_file))
+
         if not os.path.exists(local_audio_file):
-            return jsonify({"error": "Audio file does not exist on the server."}), 400
+            return jsonify({"error": "Audio file does not exist on the server. Please regenerate the audio."}), 400
 
         audio_clip = AudioFileClip(local_audio_file)
         audio_duration = audio_clip.duration
@@ -403,10 +428,9 @@ def create_video():
         final_clip = concatenate_videoclips(clips, method='compose')
         final_clip = final_clip.set_audio(audio_clip)
 
-        # Use a temporary file for the final video
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
-            final_video_path = temp_video.name
-
+        # Save the final video in TEMP_DIR as a temporary file
+        temp_video_filename = f"final_video_{uuid.uuid4().hex}.mp4"
+        final_video_path = os.path.join(TEMP_DIR, temp_video_filename)
         final_clip.write_videofile(final_video_path, fps=24, codec="libx264", audio_codec="aac")
 
         # Clean up resources
@@ -416,15 +440,9 @@ def create_video():
             if hasattr(clip, 'close'):
                 clip.close()
 
-        @after_this_request
-        def cleanup(response):
-            try:
-                os.remove(final_video_path)
-            except Exception as e:
-                print("Error cleaning up temporary video file:", e)
-            return response
-
-        return send_file(final_video_path, as_attachment=True, download_name="final_video.mp4")
+        # Return a JSON response with the URL to download the video.
+        video_url = f"{BASE_URL}/download_video/{temp_video_filename}"
+        return jsonify({"video_url": video_url}), 200
 
     except Exception as e:
         print("Error in /create_video:", e)
@@ -432,16 +450,17 @@ def create_video():
 
 @app.route('/download_video/<filename>', methods=['GET'])
 def download_video(filename):
-    try:
-        static_dir = os.path.join(os.getcwd(), 'static')
-        file_path = os.path.join(static_dir, filename)
-        if not os.path.exists(file_path):
-            raise NotFound
-        return send_file(file_path, as_attachment=True)
-    except NotFound:
+    file_path = os.path.join(TEMP_DIR, filename)
+    if not os.path.exists(file_path):
         return jsonify({'error': 'Video file not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    @after_this_request
+    def cleanup(response):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print("Error cleaning up temporary video file:", e)
+        return response
+    return send_file(file_path, as_attachment=True, download_name=filename)
 
 @app.route('/upload_image', methods=['POST'])
 def upload_image():
@@ -501,7 +520,7 @@ def tiktok_status():
         return jsonify({"authenticated": True, "access_token": access_token, "user_id": user_id}), 200
     else:
         return jsonify({"authenticated": False}), 200
-        
+
 @app.route('/tiktok_login_url', methods=['GET'])
 def tiktok_login_url():
     client_id = os.getenv('TIKTOK_CLIENT_ID', 'YOUR_TIKTOK_CLIENT_ID')
@@ -514,7 +533,6 @@ def tiktok_login_url():
 
 @app.route('/schedule_post', methods=['POST'])
 def schedule_post():
-    # This now returns a message that scheduling is disabled
     return jsonify({"message": "Post scheduling through TikTok API is disabled in this version."}), 200
 
 ###############################################################################

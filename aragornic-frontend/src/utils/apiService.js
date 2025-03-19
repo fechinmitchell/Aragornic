@@ -5,7 +5,8 @@ const PROD_API_URL = 'https://aragornic.onrender.com';
 const LOCAL_API_URL = 'http://localhost:5000';
 
 /**
- * Makes an API request with fallback to localhost
+ * Makes an API request with fallback to localhost.
+ * For endpoints like '/create_video', which may take minutes to complete, we use a longer timeout.
  * @param {string} endpoint - API endpoint to call (without the base URL)
  * @param {Object} options - Fetch options (method, headers, body, etc.)
  * @returns {Promise} - Promise with the API response
@@ -15,7 +16,9 @@ export const apiRequest = async (endpoint, options = {}) => {
   try {
     console.log(`Trying production API at: ${PROD_API_URL}${endpoint}`);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    // Set timeout to 10 minutes (600000 ms) for create_video, otherwise 5 seconds (5000 ms)
+    const timeoutDuration = endpoint === '/create_video' ? 600000 : 5000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutDuration);
     
     const response = await fetch(`${PROD_API_URL}${endpoint}`, {
       ...options,
